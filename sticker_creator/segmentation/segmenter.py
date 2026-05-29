@@ -23,6 +23,7 @@ from sticker_creator.segmentation.model_registry import (
     KNOWN_MODELS,
     MODEL_SIZES,
 )
+from sticker_creator.segmentation.engine import SegmentationEngine
 from sticker_creator.segmentation.sam_segmenter import (
     DEFAULT_MODEL_DIR,
     SamSegmenter,
@@ -48,9 +49,16 @@ class SegmenterWorker(QObject):
     processing_started = Signal()
     processing_finished = Signal()
 
-    def __init__(self, model_dir=DEFAULT_MODEL_DIR):
+    def __init__(
+        self,
+        model_dir=DEFAULT_MODEL_DIR,
+        engine: SegmentationEngine | None = None,
+    ):
         super().__init__()
-        self._core = SamSegmenter(model_dir)
+        # Default to the SAM 2 core; tests inject a fake engine here.
+        self._core: SegmentationEngine = (
+            engine if engine is not None else SamSegmenter(model_dir)
+        )
 
     @property
     def registry(self):
@@ -120,9 +128,9 @@ class Segmenter(QObject):
     _load_requested = Signal(object)    # model_name (str | None)
     _segment_requested = Signal(object, object)  # image, points
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, engine: SegmentationEngine | None = None):
         super().__init__(parent)
-        self._worker = SegmenterWorker()
+        self._worker = SegmenterWorker(engine=engine)
         self._runner = WorkerThread(self._worker)
 
         # Forward worker signals to our own
