@@ -1,8 +1,7 @@
 """Tests for the sticker pipeline.
 
-The border-free / border-only paths are pure numpy+PIL and run without a Qt
-event loop — that testability is the point of the StickerPipeline module. The
-balloon path needs a QGuiApplication (QPainter), so it uses the ``qapp`` fixture.
+Every path — including the balloon — is pure numpy+PIL and runs without a Qt
+event loop. That headless testability is the point of the StickerPipeline module.
 """
 
 import numpy as np
@@ -89,7 +88,7 @@ class TestComposeSticker:
         out = compose_sticker(raw, opts)
         assert out.shape[2] == 4
 
-    def test_balloon_merges_and_borders_together(self, qapp, image_and_mask):
+    def test_balloon_merges_and_borders_together(self, image_and_mask):
         image, mask = image_and_mask
         raw = build_raw_sticker(image, mask)
         opts = StickerOptions(

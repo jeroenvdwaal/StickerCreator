@@ -15,9 +15,10 @@ the steps and the rules between them:
 
 Preview background flattening stays in :mod:`sticker_creator.utils.sticker_border`
 (``apply_background``) because it is a display concern, not part of the saved
-sticker. Every step here is pure numpy/PIL/Qt-image — no widgets — so the whole
-pipeline is exercisable without a running event loop, and the GUI, the
-clipboard, and the help-image script all drive the same code.
+sticker. Every step here is pure numpy/PIL — no Qt, no widgets — so the whole
+pipeline (balloon included) is exercisable headless, without a running event
+loop, and the GUI, the clipboard, and the help-image script all drive the same
+code.
 """
 
 from __future__ import annotations
