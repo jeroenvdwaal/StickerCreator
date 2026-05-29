@@ -2,27 +2,16 @@
 
 import numpy as np
 
+from sticker_creator.utils.sticker_border import extract_sticker
+
 
 def _extract_sticker(mask: np.ndarray, image: np.ndarray) -> np.ndarray:
-    """Replicate the sticker extraction logic from MainWindow."""
-    h, w = image.shape[:2]
+    """Border-free extraction via the real ``extract_sticker``.
 
-    if image.shape[2] == 3:
-        rgba = np.zeros((h, w, 4), dtype=np.uint8)
-        rgba[:, :, :3] = image
-        rgba[:, :, 3] = (mask > 0).astype(np.uint8) * 255
-    else:
-        rgba = image.copy()
-        rgba[:, :, 3] = (mask > 0).astype(np.uint8) * 255
-
-    # Crop to bounding box of mask
-    ys, xs = np.where(mask > 0)
-    if len(xs) > 0 and len(ys) > 0:
-        x1, x2 = xs.min(), xs.max() + 1
-        y1, y2 = ys.min(), ys.max() + 1
-        rgba = rgba[y1:y2, x1:x2]
-
-    return rgba
+    Thin adapter that flips the argument order so the existing call sites read
+    ``_extract_sticker(mask, image)``; the logic under test is the production one.
+    """
+    return extract_sticker(image, mask, border_enabled=False)
 
 
 class TestStickerExtraction:
