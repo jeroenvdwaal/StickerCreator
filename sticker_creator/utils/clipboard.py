@@ -1,11 +1,10 @@
 """Clipboard operations for image paste and copy using KDE/system clipboard."""
 
-import io
-
 import numpy as np
-from PIL import Image
 from PySide6.QtCore import QByteArray, QCoreApplication, QMimeData
-from PySide6.QtGui import QClipboard, QImage, QPixmap
+from PySide6.QtGui import QClipboard
+
+from sticker_creator.utils import imagecodec
 
 
 class ClipboardManager:
@@ -32,12 +31,7 @@ class ClipboardManager:
         if pixmap is not None and not pixmap.isNull():
             qimage = pixmap.toImage()
             if not qimage.isNull():
-                qimage = qimage.convertToFormat(QImage.Format.Format_RGBA8888)
-                width = qimage.width()
-                height = qimage.height()
-                ptr = qimage.constBits()
-                arr = np.frombuffer(ptr, dtype=np.uint8).reshape((height, width, 4))
-                return arr[:, :, :3].copy()
+                return imagecodec.from_qimage(qimage)[:, :, :3].copy()
 
         # ── Attempt 2: MIME data path (used by our own copy_image) ────
         mime = self._clipboard.mimeData(QClipboard.Mode.Clipboard)
@@ -45,23 +39,11 @@ class ClipboardManager:
             png_bytes = mime.data("image/png")
             if png_bytes and len(png_bytes) > 0:
                 try:
-                    pil_img = Image.open(io.BytesIO(png_bytes.data()))
-                    arr = np.asarray(pil_img.convert("RGBA"), dtype=np.uint8)
-                    return arr[:, :, :3].copy()
+                    return imagecodec.decode_png(png_bytes.data())[:, :, :3].copy()
                 except Exception:
                     pass
 
         return None
-
-    @staticmethod
-    def _rgba_to_qimage(image_rgba: np.ndarray) -> QImage:
-        """Convert an RGBA numpy array to a tightly-packed QImage.
-
-        The returned QImage does **not** own its data — the caller must
-        hold a reference to the array or call ``.copy()`` on the QImage.
-        """
-        h, w = image_rgba.shape[:2]
-        return QImage(image_rgba.data, w, h, QImage.Format.Format_RGBA8888)
 
     def copy_image(self, image_rgba: np.ndarray) -> bool:
         """Copy an RGBA numpy array to the system clipboard.
@@ -79,8 +61,7 @@ class ClipboardManager:
         Returns:
             True on success.
         """
-        image_rgba = np.ascontiguousarray(image_rgba)
-        qimage = self._rgba_to_qimage(image_rgba).copy()  # .copy() = own data
+        qimage = imagecodec.to_qimage(image_rgba)  # owns its pixels
 
         mime = QMimeData()
         mime.setImageData(qimage)
@@ -102,15 +83,14 @@ class ClipboardManager:
         Returns:
             True on success.
         """
-        from sticker_creator.utils.sticker_resize import resize_to_512
+        from sticker_creator.utils.sticker_pipeline import resize_for_whatsapp
         from sticker_creator.utils.file_io import ImageSaver
 
         # 1. Resize to 512×512 with transparent padding
-        resized = resize_to_512(image_rgba)
+        resized = resize_for_whatsapp(image_rgba)
 
         # 2. Build MIME data with native image (for all apps) + WebP (bonus)
-        resized = np.ascontiguousarray(resized)
-        qimage = self._rgba_to_qimage(resized).copy()
+        qimage = imagecodec.to_qimage(resized)  # owns its pixels
 
         mime = QMimeData()
         mime.setImageData(qimage)  # ← standard path — works everywhere

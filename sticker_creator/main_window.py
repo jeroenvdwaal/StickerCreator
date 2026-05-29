@@ -34,16 +34,17 @@ from sticker_creator.utils.clipboard import ClipboardManager
 from sticker_creator.utils.file_io import ImageLoader, ImageSaver
 from sticker_creator.utils.sticker_border import (
     BACKGROUND_TRANSPARENT,
-    add_white_border,
     apply_background,
-    extract_sticker,
 )
-from sticker_creator.utils.sticker_resize import ensure_min_size, resize_to_512
+from sticker_creator.utils.sticker_pipeline import (
+    StickerOptions,
+    auto_border_width,
+    build_raw_sticker,
+    compose_sticker,
+    resize_for_whatsapp,
+)
 from sticker_creator.utils.icons import icon_undo, icon_clear
-from sticker_creator.utils.balloon_renderer import (
-    render_balloon,
-    STYLE_AUTO,
-)
+from sticker_creator.utils.balloon_renderer import STYLE_AUTO
 from sticker_creator.widgets.drop_overlay import ACCEPTED_EXTENSIONS, DropOverlay
 from sticker_creator.widgets.image_viewer import ImageViewer
 from sticker_creator.widgets.inspector_panel import InspectorPanel
@@ -386,13 +387,13 @@ class MainWindow(QMainWindow):
             return
         self.segmenter.segment(
             image=self._current_image,
-            points=self.image_viewer._points,
+            points=self.image_viewer.prompt_points(),
         )
 
     @Slot(object)
     def _on_undo_performed(self, _removed: dict) -> None:
         self._refresh_action_state()
-        if self._current_image is None or not self.image_viewer._points:
+        if self._current_image is None or not self.image_viewer.has_prompt_points():
             self._current_mask = None
             self._raw_sticker = None
             self._current_sticker = None
@@ -403,7 +404,7 @@ class MainWindow(QMainWindow):
             return
         self.segmenter.segment(
             image=self._current_image,
-            points=self.image_viewer._points,
+            points=self.image_viewer.prompt_points(),
         )
 
     @Slot()
@@ -425,10 +426,8 @@ class MainWindow(QMainWindow):
             self._seg_start_time = None
 
         if self._current_image is not None:
-            raw = extract_sticker(self._current_image, mask, border_enabled=False)
-            self._raw_sticker = ensure_min_size(raw, min_side=128)
-            h, w = self._raw_sticker.shape[:2]
-            self._border_width = max(1, round(min(w, h) * 0.014))
+            self._raw_sticker = build_raw_sticker(self._current_image, mask)
+            self._border_width = auto_border_width(self._raw_sticker)
             self.inspector.set_border_width(self._border_width)
             self._rebuild_sticker()
 
@@ -489,27 +488,25 @@ class MainWindow(QMainWindow):
     # ── Border / Background ────────────────────────────────────────────────
 
     def _rebuild_sticker(self) -> None:
-        """Re-derive ``_current_sticker`` from ``_raw_sticker``.
+        """Re-derive ``_current_sticker`` from ``_raw_sticker`` via the pipeline.
 
-        Order: balloon (merged into the silhouette) → border → preview
-        background (preview only).  The balloon is composited into the raw
-        sticker first so the single white border wraps subject and balloon
-        together, making the balloon part of the sticker outline.
+        The pipeline owns the compose order (balloon → border); the preview
+        background is applied here for display only and is not part of the
+        saved sticker.
         """
         if self._raw_sticker is None:
             return
-        rgba = self._raw_sticker
-
-        if self._balloon_text.strip():
-            rgba = render_balloon(rgba, self._balloon_text, self._balloon_style)
-        else:
-            rgba = rgba.copy()
-
-        if self._border_enabled:
-            rgba = add_white_border(rgba, border_width=self._border_width)
-
-        self._current_sticker = rgba
-        self.inspector.set_sticker(apply_background(rgba, self._background_color))
+        options = StickerOptions(
+            border_enabled=self._border_enabled,
+            border_width=self._border_width,
+            balloon_text=self._balloon_text,
+            balloon_style=self._balloon_style,
+            background=self._background_color,
+        )
+        self._current_sticker = compose_sticker(self._raw_sticker, options)
+        self.inspector.set_sticker(
+            apply_background(self._current_sticker, self._background_color)
+        )
 
     @Slot(bool)
     def _on_border_toggled(self, enabled: bool) -> None:
@@ -568,7 +565,7 @@ class MainWindow(QMainWindow):
         path = Path(file_path)
         is_whatsapp = "WhatsApp Sticker" in (selected_filter or "")
         if is_whatsapp:
-            self.image_saver.save_webp(resize_to_512(self._current_sticker), path, quality=80)
+            self.image_saver.save_webp(resize_for_whatsapp(self._current_sticker), path, quality=80)
         elif path.suffix.lower() == ".webp":
             self.image_saver.save_webp(self._current_sticker, path, quality=100)
         else:
@@ -608,7 +605,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_action_state(self) -> None:
         has_image = self._current_image is not None
-        has_points = has_image and bool(self.image_viewer._points)
+        has_points = has_image and self.image_viewer.has_prompt_points()
         has_sticker = self._current_sticker is not None
 
         self._undo_action.setEnabled(has_points)

@@ -418,15 +418,7 @@ def _side_edge_in_band(
 
 # ── QImage ↔ numpy ────────────────────────────────────────────────────────────
 
-def _to_qimage(arr: np.ndarray) -> QImage:
-    arr_c = np.ascontiguousarray(arr)
-    h, w = arr_c.shape[:2]
-    img = QImage(arr_c.data, w, h, w * 4, QImage.Format.Format_RGBA8888)
-    return img.copy()
-
-
-def _from_qimage(img: QImage) -> np.ndarray:
-    img = img.convertToFormat(QImage.Format.Format_RGBA8888)
-    h, w = img.height(), img.width()
-    ptr = img.constBits()
-    return np.frombuffer(ptr, dtype=np.uint8).reshape((h, w, 4)).copy()
+from sticker_creator.utils.imagecodec import (  # noqa: E402
+    to_qimage as _to_qimage,
+    from_qimage as _from_qimage,
+)

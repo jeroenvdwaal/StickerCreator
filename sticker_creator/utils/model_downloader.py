@@ -5,15 +5,22 @@ official SAM 2 release server and emits progress/finished/error signals so the
 UI can stay responsive during the download.
 """
 
-from pathlib import Path
-
 import requests
 from PySide6.QtCore import QObject, Signal, Slot
 
 from sticker_creator.utils.paths import user_model_dir
+from sticker_creator.segmentation.model_registry import (
+    MODEL_SIZES,
+    MODEL_URLS,
+    ModelRegistry,
+)
 
 # Directory where checkpoints are stored (user-writable; XDG_DATA_HOME)
 MODEL_DIR = user_model_dir()
+
+# Catalogue facts (URLs, sizes, valid-size threshold) live in the registry —
+# re-exported here for callers that already import them from this module.
+__all__ = ["MODEL_DIR", "MODEL_SIZES", "MODEL_URLS", "ModelDownloader"]
 
 # Default headers to avoid 403 responses from Meta's CDN
 _DEFAULT_HEADERS: dict[str, str] = {
@@ -21,23 +28,6 @@ _DEFAULT_HEADERS: dict[str, str] = {
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ),
-}
-
-# SAM 2 model checkpoint URLs (from Meta's official releases)
-_BASE_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/092824/"
-
-MODEL_URLS: dict[str, str] = {
-    "sam2.1_hiera_tiny":      _BASE_URL + "sam2.1_hiera_tiny.pt",
-    "sam2.1_hiera_small":     _BASE_URL + "sam2.1_hiera_small.pt",
-    "sam2.1_hiera_base_plus": _BASE_URL + "sam2.1_hiera_base_plus.pt",
-    "sam2.1_hiera_large":     _BASE_URL + "sam2.1_hiera_large.pt",
-}
-
-MODEL_SIZES: dict[str, str] = {
-    "sam2.1_hiera_tiny":      "~148 MB",
-    "sam2.1_hiera_small":     "~175 MB",
-    "sam2.1_hiera_base_plus": "~308 MB",
-    "sam2.1_hiera_large":     "~856 MB",
 }
 
 
@@ -76,11 +66,13 @@ class ModelDownloader(QObject):
             return
 
         url = MODEL_URLS[self.model_name]
-        output_path = MODEL_DIR / f"{self.model_name}.pt"
+        # Build the registry from the current MODEL_DIR so tests that patch it
+        # (and any runtime override) are honoured.
+        registry = ModelRegistry(MODEL_DIR)
+        output_path = registry.checkpoint_path(self.model_name)
 
         # Already exists with a plausible size — skip download
-        _MIN_VALID_BYTES = 10 * 1024 * 1024  # 10 MB minimum for any real checkpoint
-        if output_path.exists() and output_path.stat().st_size >= _MIN_VALID_BYTES:
+        if registry.is_downloaded(self.model_name):
             self.progress.emit(100)
             self.finished.emit(output_path)
             return
