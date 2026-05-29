@@ -17,47 +17,19 @@ import torch
 from PySide6.QtCore import QObject, QSettings, Signal, Slot, QThread
 
 from sticker_creator.utils.paths import user_model_dir
+from sticker_creator.segmentation.model_registry import (
+    KNOWN_MODELS,
+    MODEL_SIZES,
+    ModelRegistry,
+    config_name as _model_config_name,
+)
 
-# Project root for model checkpoint discovery
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_MODEL_DIR = user_model_dir()
-
-# All known SAM 2 model variants
-KNOWN_MODELS: list[str] = [
-    "sam2.1_hiera_tiny",
-    "sam2.1_hiera_small",
-    "sam2.1_hiera_base_plus",
-    "sam2.1_hiera_large",
-]
 
 
 def get_settings() -> QSettings:
     """Return a persistent QSettings instance for the application."""
     return QSettings("KDE", "Sticker Creator")
-
-
-# Map from our checkpoint stem names to the Hydra config paths expected by build_sam2
-_CONFIG_MAP: dict[str, str] = {
-    "sam2.1_hiera_tiny":      "configs/sam2.1/sam2.1_hiera_t",
-    "sam2.1_hiera_small":     "configs/sam2.1/sam2.1_hiera_s",
-    "sam2.1_hiera_base_plus": "configs/sam2.1/sam2.1_hiera_b+",
-    "sam2.1_hiera_large":     "configs/sam2.1/sam2.1_hiera_l",
-    # Legacy SAM 2.0 names
-    "sam2_hiera_tiny":        "sam2_hiera_t",
-    "sam2_hiera_small":       "sam2_hiera_s",
-    "sam2_hiera_base_plus":   "sam2_hiera_b+",
-    "sam2_hiera_large":       "sam2_hiera_l",
-}
-
-
-def _model_config_name(model_name: str) -> str:
-    """Derive the SAM 2 Hydra config path from a checkpoint model name."""
-    return _CONFIG_MAP.get(model_name, model_name)
-
-
-def _checkpoint_path(model_dir: Path, model_name: str) -> Path:
-    """Return the expected checkpoint path for a given model name."""
-    return model_dir / f"{model_name}.pt"
 
 
 def _patch_sam2_transforms() -> None:
@@ -219,7 +191,7 @@ class SegmenterWorker(QObject):
 
     def __init__(self, model_dir: str | Path = DEFAULT_MODEL_DIR):
         super().__init__()
-        self.model_dir = Path(model_dir)
+        self.registry = ModelRegistry(model_dir)
         self._model = None
         self._predictor = None          # cached SAM2ImagePredictor
         self._predictor_image = None    # last image set on the predictor
@@ -234,7 +206,7 @@ class SegmenterWorker(QObject):
             if model_name is None:
                 model_name = get_settings().value("active_model", "")
                 if not model_name:
-                    available = self._list_available()
+                    available = self.registry.list_downloaded()
                     if available:
                         model_name = available[0]
                     else:
@@ -244,7 +216,7 @@ class SegmenterWorker(QObject):
                         )
                         return
 
-            checkpoint = self._find_checkpoint(model_name)
+            checkpoint = self.registry.find_loadable(model_name)
             if checkpoint is None:
                 self.model_error.emit(
                     f"Checkpoint {model_name}.pt not found in models/.\n\n"
@@ -285,29 +257,6 @@ class SegmenterWorker(QObject):
 
         except Exception as e:
             self.model_error.emit(str(e))
-
-    _MIN_CHECKPOINT_BYTES = 10 * 1024 * 1024  # 10 MB — any real SAM 2 checkpoint is larger
-
-    def _find_checkpoint(self, model_name: str) -> Path | None:
-        """Find a valid (non-corrupted) checkpoint for a specific model name."""
-        self.model_dir.mkdir(parents=True, exist_ok=True)
-        for candidate in [
-            _checkpoint_path(self.model_dir, model_name),
-            self.model_dir / f"{model_name.replace('sam2.1_', 'sam2_')}.pt",
-        ]:
-            if candidate.exists() and candidate.stat().st_size >= self._MIN_CHECKPOINT_BYTES:
-                return candidate
-        return None
-
-    def _list_available(self) -> list[str]:
-        """Return names of all downloaded checkpoints."""
-        self.model_dir.mkdir(parents=True, exist_ok=True)
-        available: list[str] = []
-        for fpath in sorted(self.model_dir.glob("*.pt")):
-            name = fpath.stem
-            if name not in available:
-                available.append(name)
-        return available
 
     @Slot(object, object)
     def segment(self, image: np.ndarray, points: list[dict]):
@@ -429,14 +378,12 @@ class Segmenter(QObject):
 
     def available_models(self) -> list[dict]:
         """Return info about all known model variants and their download status."""
-        from sticker_creator.utils.model_downloader import MODEL_SIZES
-
-        min_bytes = SegmenterWorker._MIN_CHECKPOINT_BYTES
+        registry = self._worker.registry
         active = self.active_model_name
         results: list[dict] = []
         for model_name in KNOWN_MODELS:
-            ckpt = _checkpoint_path(self._worker.model_dir, model_name)
-            is_downloaded = ckpt.exists() and ckpt.stat().st_size >= min_bytes
+            ckpt = registry.checkpoint_path(model_name)
+            is_downloaded = registry.is_downloaded(model_name)
             results.append({
                 "name": model_name,
                 "size": MODEL_SIZES.get(model_name, "unknown"),
@@ -448,7 +395,7 @@ class Segmenter(QObject):
 
     def delete_model(self, model_name: str) -> bool:
         """Delete a downloaded checkpoint. Returns ``True`` on success."""
-        ckpt = _checkpoint_path(self._worker.model_dir, model_name)
+        ckpt = self._worker.registry.checkpoint_path(model_name)
         if ckpt.exists():
             ckpt.unlink()
             if self.active_model_name == model_name:

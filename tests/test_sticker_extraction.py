@@ -2,27 +2,16 @@
 
 import numpy as np
 
+from sticker_creator.utils.sticker_border import extract_sticker
+
 
 def _extract_sticker(mask: np.ndarray, image: np.ndarray) -> np.ndarray:
-    """Replicate the sticker extraction logic from MainWindow."""
-    h, w = image.shape[:2]
+    """Border-free extraction via the real ``extract_sticker``.
 
-    if image.shape[2] == 3:
-        rgba = np.zeros((h, w, 4), dtype=np.uint8)
-        rgba[:, :, :3] = image
-        rgba[:, :, 3] = (mask > 0).astype(np.uint8) * 255
-    else:
-        rgba = image.copy()
-        rgba[:, :, 3] = (mask > 0).astype(np.uint8) * 255
-
-    # Crop to bounding box of mask
-    ys, xs = np.where(mask > 0)
-    if len(xs) > 0 and len(ys) > 0:
-        x1, x2 = xs.min(), xs.max() + 1
-        y1, y2 = ys.min(), ys.max() + 1
-        rgba = rgba[y1:y2, x1:x2]
-
-    return rgba
+    Thin adapter that flips the argument order so the existing call sites read
+    ``_extract_sticker(mask, image)``; the logic under test is the production one.
+    """
+    return extract_sticker(image, mask, border_enabled=False)
 
 
 class TestStickerExtraction:
@@ -221,3 +210,53 @@ class TestWhiteBorder:
         left_border = bordered[:, :bw, 3] > 0
         if np.any(left_border):
             assert np.all(bordered[:, :bw, :3][left_border] >= 100)
+
+
+class TestApplyBackground:
+    """Tests for apply_background — flattening RGBA onto a solid colour."""
+
+    @staticmethod
+    def _rgba():
+        # 2×2: one opaque red, one half-alpha red, two fully transparent.
+        arr = np.zeros((2, 2, 4), dtype=np.uint8)
+        arr[0, 0] = [200, 0, 0, 255]
+        arr[0, 1] = [200, 0, 0, 128]
+        return arr
+
+    def test_transparent_returns_copy_unchanged(self):
+        from sticker_creator.utils.sticker_border import (
+            BACKGROUND_TRANSPARENT,
+            apply_background,
+        )
+
+        src = self._rgba()
+        out = apply_background(src, BACKGROUND_TRANSPARENT)
+        assert np.array_equal(out, src)
+        assert out is not src  # must not alias the input
+
+    def test_white_makes_everything_opaque(self):
+        from sticker_creator.utils.sticker_border import (
+            BACKGROUND_WHITE,
+            apply_background,
+        )
+
+        out = apply_background(self._rgba(), BACKGROUND_WHITE)
+        assert np.all(out[:, :, 3] == 255)
+        # Fully transparent pixels become pure white.
+        assert tuple(out[1, 1]) == (255, 255, 255, 255)
+        # Opaque red stays red.
+        assert tuple(out[0, 0]) == (200, 0, 0, 255)
+
+    def test_black_composites_over_black(self):
+        from sticker_creator.utils.sticker_border import (
+            BACKGROUND_BLACK,
+            apply_background,
+        )
+
+        out = apply_background(self._rgba(), BACKGROUND_BLACK)
+        assert np.all(out[:, :, 3] == 255)
+        # Transparent pixels become pure black.
+        assert tuple(out[1, 1]) == (0, 0, 0, 255)
+        # Half-alpha red over black: 200*128/255 = 100.39, truncated to 100.
+        assert out[0, 1, 0] == 100
+        assert out[0, 1, 1] == 0

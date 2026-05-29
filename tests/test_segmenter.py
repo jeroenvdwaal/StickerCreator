@@ -1,7 +1,8 @@
 """Tests for the SAM 2 segmenter logic.
 
-These tests cover the checkpoint discovery and image encoding logic
-without requiring torch or PySide6 — just numpy and pathlib.
+Checkpoint-discovery/validity is tested against the real
+:class:`ModelRegistry` (pathlib-only — no torch or PySide6), so the tests
+exercise the same code the segmenter and downloader use rather than a copy.
 """
 
 from pathlib import Path
@@ -9,87 +10,78 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from sticker_creator.segmentation.model_registry import (
+    MIN_CHECKPOINT_BYTES,
+    ModelRegistry,
+    config_name,
+)
 
-# ---------------------------------------------------------------------------
-# Standalone copy of the _find_checkpoint logic from segmenter.py
-# so tests don't need to import torch or PySide6.
-# ---------------------------------------------------------------------------
-def _find_checkpoint(model_dir: Path) -> Path | None:
-    """Find the SAM 2 checkpoint in the model directory."""
-    model_dir.mkdir(parents=True, exist_ok=True)
 
-    patterns = [
-        "sam2.1_hiera_tiny.pt",
-        "sam2_hiera_tiny.pt",
-        "sam2.1_hiera_small.pt",
-        "sam2_hiera_small.pt",
-        "*.pt",
-    ]
-    for pattern in patterns:
-        if "*" in pattern:
-            matches = list(model_dir.glob(pattern))
-            if matches:
-                return matches[0]
-        else:
-            candidate = model_dir / pattern
-            if candidate.exists():
-                return candidate
-    return None
+def _write_valid_checkpoint(path: Path) -> Path:
+    """Create a file that passes the registry's size guard (sparse, fast)."""
+    with open(path, "wb") as f:
+        f.truncate(MIN_CHECKPOINT_BYTES + 1)
+    return path
+
+
+def _write_corrupt_checkpoint(path: Path) -> Path:
+    """Create an under-sized (corrupt/truncated) checkpoint file."""
+    path.write_bytes(b"too small")
+    return path
 
 
 class TestCheckpointDiscovery:
-    """Tests for _find_checkpoint logic."""
+    """Tests for ModelRegistry.find_loadable / is_downloaded."""
 
     def test_find_checkpoint_no_files(self, model_dir):
         """Returns None when no checkpoint files exist."""
-        result = _find_checkpoint(model_dir)
-        assert result is None
+        reg = ModelRegistry(model_dir)
+        assert reg.find_loadable("sam2.1_hiera_tiny") is None
 
     def test_find_checkpoint_with_tiny(self, model_dir):
-        """Finds sam2.1_hiera_tiny.pt when present."""
-        checkpoint = model_dir / "sam2.1_hiera_tiny.pt"
-        checkpoint.write_text("dummy checkpoint data")
-        result = _find_checkpoint(model_dir)
-        assert result == checkpoint
+        """Finds sam2.1_hiera_tiny.pt when present and valid."""
+        ckpt = _write_valid_checkpoint(model_dir / "sam2.1_hiera_tiny.pt")
+        reg = ModelRegistry(model_dir)
+        assert reg.find_loadable("sam2.1_hiera_tiny") == ckpt
+        assert reg.is_downloaded("sam2.1_hiera_tiny")
 
     def test_find_checkpoint_with_small(self, model_dir):
-        """Finds sam2.1_hiera_small.pt when present."""
-        checkpoint = model_dir / "sam2.1_hiera_small.pt"
-        checkpoint.write_text("dummy checkpoint data")
-        result = _find_checkpoint(model_dir)
-        assert result == checkpoint
+        """Finds sam2.1_hiera_small.pt when present and valid."""
+        ckpt = _write_valid_checkpoint(model_dir / "sam2.1_hiera_small.pt")
+        reg = ModelRegistry(model_dir)
+        assert reg.find_loadable("sam2.1_hiera_small") == ckpt
 
-    def test_find_checkpoint_any_pt(self, model_dir):
-        """Finds any .pt file if no named checkpoint exists."""
-        checkpoint = model_dir / "custom_model.pt"
-        checkpoint.write_text("dummy checkpoint data")
-        result = _find_checkpoint(model_dir)
-        assert result == checkpoint
-
-    def test_find_checkpoint_prefers_named(self, model_dir):
-        """Prefers the named tiny checkpoint over other .pt files."""
-        tiny = model_dir / "sam2.1_hiera_tiny.pt"
-        tiny.write_text("tiny data")
-        other = model_dir / "other.pt"
-        other.write_text("other data")
-        result = _find_checkpoint(model_dir)
-        assert result == tiny
+    def test_corrupt_checkpoint_rejected(self, model_dir):
+        """An under-sized file is treated as absent (not loadable)."""
+        _write_corrupt_checkpoint(model_dir / "sam2.1_hiera_tiny.pt")
+        reg = ModelRegistry(model_dir)
+        assert reg.find_loadable("sam2.1_hiera_tiny") is None
+        assert not reg.is_downloaded("sam2.1_hiera_tiny")
 
     def test_find_checkpoint_legacy_name(self, model_dir):
-        """Finds sam2_hiera_tiny.pt (legacy name) when present."""
-        checkpoint = model_dir / "sam2_hiera_tiny.pt"
-        checkpoint.write_text("legacy checkpoint")
-        result = _find_checkpoint(model_dir)
-        assert result == checkpoint
+        """Resolves the legacy sam2_hiera_tiny.pt name for a 2.1 request."""
+        legacy = _write_valid_checkpoint(model_dir / "sam2_hiera_tiny.pt")
+        reg = ModelRegistry(model_dir)
+        assert reg.find_loadable("sam2.1_hiera_tiny") == legacy
 
-    def test_find_checkpoint_prefers_named_over_wildcard(self, model_dir):
-        """sam2.1_hiera_tiny.pt is preferred over sam2_hiera_tiny.pt."""
-        new_name = model_dir / "sam2.1_hiera_tiny.pt"
-        new_name.write_text("v2.1")
-        legacy = model_dir / "sam2_hiera_tiny.pt"
-        legacy.write_text("legacy")
-        result = _find_checkpoint(model_dir)
-        assert result == new_name
+    def test_find_checkpoint_prefers_canonical_over_legacy(self, model_dir):
+        """sam2.1_hiera_tiny.pt is preferred over the legacy sam2_hiera_tiny.pt."""
+        canonical = _write_valid_checkpoint(model_dir / "sam2.1_hiera_tiny.pt")
+        _write_valid_checkpoint(model_dir / "sam2_hiera_tiny.pt")
+        reg = ModelRegistry(model_dir)
+        assert reg.find_loadable("sam2.1_hiera_tiny") == canonical
+
+    def test_list_downloaded_returns_stems(self, model_dir):
+        """list_downloaded returns the stems of every .pt present."""
+        _write_valid_checkpoint(model_dir / "sam2.1_hiera_tiny.pt")
+        _write_corrupt_checkpoint(model_dir / "other.pt")
+        reg = ModelRegistry(model_dir)
+        assert reg.list_downloaded() == ["other", "sam2.1_hiera_tiny"]
+
+    def test_config_name_maps_known_and_falls_back(self):
+        """Known stems map to Hydra config paths; unknown names pass through."""
+        assert config_name("sam2.1_hiera_tiny") == "configs/sam2.1/sam2.1_hiera_t"
+        assert config_name("mystery") == "mystery"
 
 
 class TestImageEncoding:
@@ -155,23 +147,13 @@ class TestImageEncoding:
 class TestModelErrorHandling:
     """Tests for model loading error scenarios."""
 
-    def test_no_checkpoint_returns_error_message(self, model_dir):
-        """When no checkpoint exists, the error mentions the user action."""
-        result = _find_checkpoint(model_dir)
-        assert result is None
-        # The real segmenter would emit a model_error with a message
-        # that includes "No SAM 2 checkpoint found"
-        error_msg = (
-            "No SAM 2 checkpoint found in models/ directory.\n\n"
-            "Please download sam2.1_hiera_tiny.pt from:\n"
-            "https://github.com/facebookresearch/sam2"
-        )
-        assert "No SAM 2 checkpoint found" in error_msg
-        assert "models/" in error_msg
-        assert "sam2.1_hiera_tiny.pt" in error_msg
+    def test_no_checkpoint_returns_none(self, model_dir):
+        """When no checkpoint exists, the registry reports nothing loadable."""
+        reg = ModelRegistry(model_dir)
+        assert reg.find_loadable("sam2.1_hiera_tiny") is None
 
     def test_empty_model_dir_handled_gracefully(self, model_dir):
-        """Empty model directory does not raise an exception."""
-        # Should not raise
-        result = _find_checkpoint(model_dir)
-        assert result is None
+        """An empty model directory does not raise."""
+        reg = ModelRegistry(model_dir)
+        assert reg.list_downloaded() == []
+        assert reg.find_loadable("sam2.1_hiera_tiny") is None

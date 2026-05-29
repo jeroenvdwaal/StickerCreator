@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate a sample sticker for the help docs using the in-tree pipeline.
 
-Drives the same pipeline the GUI uses (Segmenter → render_balloon →
-add_white_border → resize_to_512), bypassing only the Qt UI shell.
+Drives the same StickerPipeline the GUI uses (Segmenter → compose_sticker →
+resize_for_whatsapp), bypassing only the Qt UI shell.
 """
 
 from __future__ import annotations
@@ -20,10 +20,14 @@ from PySide6.QtGui import QGuiApplication  # noqa: E402
 _app = QGuiApplication.instance() or QGuiApplication(sys.argv)
 
 from sticker_creator.segmentation.segmenter import SegmenterWorker  # noqa: E402
-from sticker_creator.utils.balloon_renderer import render_balloon, STYLE_AUTO  # noqa: E402
+from sticker_creator.utils.balloon_renderer import STYLE_AUTO  # noqa: E402
 from sticker_creator.utils.file_io import ImageLoader, ImageSaver  # noqa: E402
-from sticker_creator.utils.sticker_border import add_white_border, extract_sticker  # noqa: E402
-from sticker_creator.utils.sticker_resize import ensure_min_size, resize_to_512  # noqa: E402
+from sticker_creator.utils.sticker_pipeline import (  # noqa: E402
+    StickerOptions,
+    build_raw_sticker,
+    compose_sticker,
+    resize_for_whatsapp,
+)
 
 
 SRC = Path("/tmp/random_face.jpg")
@@ -63,17 +67,18 @@ def main() -> int:
     mask = state["mask"]
     print(f"mask coverage: {(mask > 0).mean() * 100:.1f}%")
 
-    print("extract…", flush=True)
-    raw = extract_sticker(image, mask, border_enabled=False)
+    print("build raw sticker…", flush=True)
+    raw = build_raw_sticker(image, mask)
     print(f"  raw {raw.shape}", flush=True)
-    print("render_balloon…", flush=True)
-    with_balloon = render_balloon(raw, BALLOON_TEXT, STYLE_AUTO)
-    print(f"  with_balloon {with_balloon.shape}", flush=True)
-    print("add_white_border…", flush=True)
-    bordered = add_white_border(with_balloon, border_width=7)
-    print(f"  bordered {bordered.shape}", flush=True)
+    print("compose (balloon + border)…", flush=True)
+    options = StickerOptions(
+        border_enabled=True, border_width=7,
+        balloon_text=BALLOON_TEXT, balloon_style=STYLE_AUTO,
+    )
+    composed = compose_sticker(raw, options)
+    print(f"  composed {composed.shape}", flush=True)
     print("resize…", flush=True)
-    final = resize_to_512(ensure_min_size(bordered, 128))
+    final = resize_for_whatsapp(composed)
     print(f"  final {final.shape}", flush=True)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)

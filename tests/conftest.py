@@ -8,6 +8,12 @@ import pytest
 from PIL import Image
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "requires_qt: test needs a Qt application / event loop"
+    )
+
+
 @pytest.fixture
 def rgb_image() -> np.ndarray:
     """Create a synthetic 100x100 RGB test image."""

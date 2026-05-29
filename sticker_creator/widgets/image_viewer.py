@@ -249,6 +249,19 @@ class ImageViewer(QWidget):
         neg = sum(1 for p in self._points if p["label"] == self.NEGATIVE)
         return {"positive": pos, "negative": neg}
 
+    def prompt_points(self) -> list[dict]:
+        """The current segmentation prompt points (positive/negative clicks).
+
+        Each point is a dict with ``x``, ``y`` (image-pixel coordinates) and
+        ``label`` (1=positive, 0=negative). Returns a copy, so callers cannot
+        mutate the viewer's internal list.
+        """
+        return [dict(p) for p in self._points]
+
+    def has_prompt_points(self) -> bool:
+        """True when at least one prompt point has been placed."""
+        return bool(self._points)
+
     # ── UI setup ───────────────────────────────────────────────────────────
 
     def _setup_ui(self):
