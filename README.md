@@ -22,6 +22,7 @@ no image is ever uploaded.
 
 - Open files, paste from clipboard, or drag-and-drop an image
 - One-click subject selection with positive / negative point prompts
+- Optional comic-strip speech balloon with your own text, placed above the subject
 - Optional white sticker border
 - Output as a 512×512 transparent PNG
 - Save to disk or copy straight to the clipboard
