@@ -30,11 +30,19 @@ def to_qimage(rgba: np.ndarray) -> QImage:
 
 
 def from_qimage(img: QImage) -> np.ndarray:
-    """``QImage`` (any format) → owning ``H×W×4`` uint8 RGBA numpy array."""
+    """``QImage`` (any format) → owning ``H×W×4`` uint8 RGBA numpy array.
+
+    Honours the image's ``bytesPerLine`` so a padded scanline stride (which
+    Qt is free to choose) does not corrupt the result.
+    """
     img = img.convertToFormat(QImage.Format.Format_RGBA8888)
     h, w = img.height(), img.width()
-    ptr = img.constBits()
-    return np.frombuffer(ptr, dtype=np.uint8).reshape((h, w, 4)).copy()
+    bpl = img.bytesPerLine()
+    buf = np.frombuffer(img.constBits(), dtype=np.uint8)
+    if bpl == w * 4:
+        return buf.reshape((h, w, 4)).copy()
+    # Drop the per-row padding bytes, then reshape to packed RGBA.
+    return buf.reshape((h, bpl))[:, : w * 4].reshape((h, w, 4)).copy()
 
 
 def to_pil(rgba: np.ndarray) -> Image.Image:
