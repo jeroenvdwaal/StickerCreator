@@ -28,6 +28,7 @@
     <ul>
       <li>Open files, paste from clipboard, or drag-and-drop an image</li>
       <li>One-click subject selection with positive/negative prompts</li>
+      <li>Optional comic-strip speech balloon with your own text</li>
       <li>Optional white sticker border</li>
       <li>Output as 512×512 transparent PNG</li>
       <li>Save to disk or copy to clipboard</li>
