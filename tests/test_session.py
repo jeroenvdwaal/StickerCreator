@@ -114,3 +114,103 @@ class TestOptions:
         session.set_balloon_text("hi")
         session.set_background("black")
         assert all(s is None for s in stickers)
+
+
+class TestPromptOrchestration:
+    """The click → segment → mask → compose loop, driven headless.
+
+    The session emits ``segment_requested`` instead of calling the segmenter;
+    tests stand in for the window by listening and feeding masks back.
+    """
+
+    def test_add_prompt_without_image_is_ignored(self, session):
+        requests = _collect(session.segment_requested)
+        session.add_prompt(10, 20, session.POSITIVE)
+        assert session.prompt_points() == []
+        assert session.has_prompt_points is False
+        assert requests == []
+
+    def test_add_prompt_records_and_requests_segmentation(self, session, image_and_mask):
+        image, _ = image_and_mask
+        session.set_image(image)
+        points_seen = _collect(session.prompt_points_changed)
+        requests = []
+        session.segment_requested.connect(lambda img, pts: requests.append((img, pts)))
+
+        session.add_prompt(10, 20, session.POSITIVE)
+
+        assert session.prompt_points() == [{"x": 10, "y": 20, "label": session.POSITIVE}]
+        assert session.has_prompt_points is True
+        assert points_seen[-1] == [{"x": 10, "y": 20, "label": session.POSITIVE}]
+        assert len(requests) == 1
+        req_img, req_pts = requests[0]
+        assert req_img is image
+        assert req_pts == [{"x": 10, "y": 20, "label": session.POSITIVE}]
+
+    def test_full_loop_to_sticker(self, session, image_and_mask):
+        image, mask = image_and_mask
+        session.set_image(image)
+        captured = []
+        session.segment_requested.connect(lambda img, pts: captured.append(pts))
+
+        session.add_prompt(120, 120, session.POSITIVE)
+        # Window/service would now run the segmenter; feed the mask back.
+        session.set_mask(mask)
+
+        assert captured  # segmentation was requested
+        assert session.has_sticker is True
+
+    def test_undo_to_nonempty_resegments(self, session, image_and_mask):
+        image, _ = image_and_mask
+        session.set_image(image)
+        session.add_prompt(120, 120, session.POSITIVE)
+        session.add_prompt(60, 60, session.NEGATIVE)
+        requests = _collect(session.segment_requested)
+
+        session.undo_prompt()
+
+        assert session.prompt_points() == [{"x": 120, "y": 120, "label": session.POSITIVE}]
+        assert len(requests) == 1            # re-segment with what remains
+
+    def test_undo_last_point_clears_derived(self, session, image_and_mask):
+        image, mask = image_and_mask
+        session.set_image(image)
+        session.add_prompt(120, 120, session.POSITIVE)
+        session.set_mask(mask)
+        assert session.has_sticker is True
+
+        requests = _collect(session.segment_requested)
+        masks = _collect(session.mask_changed)
+        session.undo_prompt()
+
+        assert session.has_prompt_points is False
+        assert session.has_sticker is False
+        assert masks[-1] is None
+        assert requests == []                # nothing left to segment
+
+    def test_clear_prompts_resets_everything(self, session, image_and_mask):
+        image, mask = image_and_mask
+        session.set_image(image)
+        session.add_prompt(120, 120, session.POSITIVE)
+        session.set_mask(mask)
+
+        requests = _collect(session.segment_requested)
+        points_seen = _collect(session.prompt_points_changed)
+        session.clear_prompts()
+
+        assert session.prompt_points() == []
+        assert session.has_sticker is False
+        assert points_seen[-1] == []
+        assert requests == []
+
+    def test_new_image_resets_prompts(self, session, image_and_mask):
+        image, _ = image_and_mask
+        session.set_image(image)
+        session.add_prompt(120, 120, session.POSITIVE)
+        assert session.has_prompt_points is True
+
+        points_seen = _collect(session.prompt_points_changed)
+        session.set_image(np.full((10, 10, 3), 1, dtype=np.uint8))
+
+        assert session.prompt_points() == []
+        assert points_seen[-1] == []

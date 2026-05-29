@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         )
         self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
         self._undo_action.setToolTip("Undo last point (Ctrl+Z)")
-        self._undo_action.triggered.connect(self.image_viewer.undo_last_point)
+        self._undo_action.triggered.connect(self.session.undo_prompt)
         self._undo_action.setEnabled(False)
         self.addAction(self._undo_action)
 
@@ -176,7 +176,7 @@ class MainWindow(QMainWindow):
         )
         self._clear_action.setShortcut(QKeySequence("Ctrl+R"))
         self._clear_action.setToolTip("Clear all points (Ctrl+R)")
-        self._clear_action.triggered.connect(self.image_viewer.clear_points)
+        self._clear_action.triggered.connect(self.session.clear_prompts)
         self._clear_action.setEnabled(False)
         self.addAction(self._clear_action)
 
@@ -280,6 +280,8 @@ class MainWindow(QMainWindow):
     def _wire_signals(self) -> None:
         # Session — workflow state drives the widgets through these signals.
         self.session.image_changed.connect(self._on_session_image_changed)
+        self.session.prompt_points_changed.connect(self._on_session_points_changed)
+        self.session.segment_requested.connect(self._on_segment_requested)
         self.session.mask_changed.connect(self.image_viewer.set_mask)
         self.session.border_width_changed.connect(self.inspector.set_border_width)
         self.session.sticker_changed.connect(self._on_session_sticker_changed)
@@ -291,10 +293,10 @@ class MainWindow(QMainWindow):
         self.segmenter.processing_started.connect(self._on_seg_started)
         self.segmenter.processing_finished.connect(self._on_seg_finished)
 
-        # Image viewer
-        self.image_viewer.point_added.connect(self._on_point_added)
-        self.image_viewer.points_cleared.connect(self._on_points_cleared)
-        self.image_viewer.undo_performed.connect(self._on_undo_performed)
+        # Image viewer — raw view intents drive the session's workflow.
+        self.image_viewer.point_clicked.connect(self.session.add_prompt)
+        self.image_viewer.undo_requested.connect(self.session.undo_prompt)
+        self.image_viewer.clear_requested.connect(self.session.clear_prompts)
 
         # Placeholder (also hosts model setup)
         self.placeholder.open_image_requested.connect(self._on_open_image)
@@ -352,42 +354,24 @@ class MainWindow(QMainWindow):
         self.inspector.dismiss_alert()
 
     @Slot(object)
+    def _on_session_points_changed(self, points: list[dict]) -> None:
+        self.image_viewer.set_points(points)
+        self._refresh_action_state()
+
+    @Slot(object)
     def _on_session_sticker_changed(self, preview) -> None:
         self.inspector.set_sticker(preview)
         self._refresh_action_state()
 
     # ── Segmentation events ────────────────────────────────────────────────
 
-    @Slot(object)
-    def _on_point_added(self, _point: dict) -> None:
-        self._refresh_action_state()
-
-        if self.session.current_image is None:
-            return
+    @Slot(object, object)
+    def _on_segment_requested(self, image, points: list[dict]) -> None:
+        """Dispatch a session segmentation request to the background service."""
         if self.segmenter.active_model_name is None:
             self._status.showMessage("A segmentation model is required.", 4000)
             return
-        self.segmenter.segment(
-            image=self.session.current_image,
-            points=self.image_viewer.prompt_points(),
-        )
-
-    @Slot(object)
-    def _on_undo_performed(self, _removed: dict) -> None:
-        self._refresh_action_state()
-        if self.session.current_image is None or not self.image_viewer.has_prompt_points():
-            self.session.clear_derived()
-            return
-        if self.segmenter.active_model_name is None:
-            return
-        self.segmenter.segment(
-            image=self.session.current_image,
-            points=self.image_viewer.prompt_points(),
-        )
-
-    @Slot()
-    def _on_points_cleared(self) -> None:
-        self.session.clear_derived()
+        self.segmenter.segment(image=image, points=points)
 
     @Slot(object)
     def _on_mask_ready(self, mask: np.ndarray) -> None:
@@ -546,7 +530,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_action_state(self) -> None:
         has_image = self.session.current_image is not None
-        has_points = has_image and self.image_viewer.has_prompt_points()
+        has_points = has_image and self.session.has_prompt_points
         has_sticker = self.session.has_sticker
 
         self._undo_action.setEnabled(has_points)

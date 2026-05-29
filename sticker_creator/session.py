@@ -11,10 +11,14 @@ the whole image → mask → sticker workflow be exercised without a ``QMainWind
 or an event loop (the balloon compose step needs a ``QGuiApplication``; the
 mask → raw → border path does not).
 
-Prompt points stay in the ``ImageViewer`` (it draws them); the session is told
-the resulting mask via :meth:`set_mask` and is told to drop it via
-:meth:`clear_derived`. Running segmentation is a service call and stays with the
-window.
+Prompt points live here too: the session owns the canonical list and the
+orchestration that turns clicks into segmentation runs. The ``ImageViewer`` is a
+dumb view — it emits raw clicks and renders whatever points the session pushes
+back via :data:`prompt_points_changed`. Running segmentation is still a service
+call (the model lives off-thread), so the session does not call the segmenter
+directly: it emits :data:`segment_requested` and the window dispatches it. That
+keeps the whole click → segment → mask → compose loop drivable headless — a test
+listens to :data:`segment_requested` and feeds masks back via :meth:`set_mask`.
 """
 
 from __future__ import annotations
@@ -45,17 +49,29 @@ class StickerSession(QObject):
         sticker_changed(object): the preview-ready sticker (background applied,
             ndarray) or ``None``. Save/copy operate on :attr:`current_sticker`,
             which is the same sticker *without* the preview background.
+        prompt_points_changed(object): the current prompt points (a fresh list
+            of ``{x, y, label}`` dicts) for the viewer to render.
+        segment_requested(object, object): ``(image, points)`` — a request for
+            the window to run the segmenter; the resulting mask comes back via
+            :meth:`set_mask`.
     """
+
+    # Prompt-point labels (mirror the viewer's POSITIVE/NEGATIVE).
+    POSITIVE = 1
+    NEGATIVE = 0
 
     image_changed = Signal(object)
     mask_changed = Signal(object)
     border_width_changed = Signal(int)
     sticker_changed = Signal(object)
+    prompt_points_changed = Signal(object)
+    segment_requested = Signal(object, object)
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         self._image: np.ndarray | None = None
         self._image_path: str | None = None
+        self._points: list[dict] = []
         self._mask: np.ndarray | None = None
         self._raw_sticker: np.ndarray | None = None
         self._current_sticker: np.ndarray | None = None
@@ -89,14 +105,65 @@ class StickerSession(QObject):
     def has_sticker(self) -> bool:
         return self._current_sticker is not None
 
+    def prompt_points(self) -> list[dict]:
+        """The current prompt points as a fresh, independently-mutable list."""
+        return [dict(p) for p in self._points]
+
+    @property
+    def has_prompt_points(self) -> bool:
+        return bool(self._points)
+
+    # ── Prompt points + segmentation orchestration ───────────────────────────
+
+    def add_prompt(self, x: int, y: int, label: int) -> None:
+        """Record a prompt click and request a re-segmentation.
+
+        No-op when no image is loaded — a click on an empty canvas means nothing.
+        """
+        if self._image is None:
+            return
+        self._points.append({"x": x, "y": y, "label": label})
+        self.prompt_points_changed.emit(self.prompt_points())
+        self._request_segmentation()
+
+    def undo_prompt(self) -> None:
+        """Drop the most recent prompt point.
+
+        Re-segments with what remains, or clears the derived sticker when the
+        last point is undone.
+        """
+        if not self._points:
+            return
+        self._points.pop()
+        self.prompt_points_changed.emit(self.prompt_points())
+        if not self._points:
+            self.clear_derived()
+            return
+        self._request_segmentation()
+
+    def clear_prompts(self) -> None:
+        """Drop all prompt points and the derived sticker."""
+        if not self._points:
+            return
+        self._points.clear()
+        self.prompt_points_changed.emit(self.prompt_points())
+        self.clear_derived()
+
+    def _request_segmentation(self) -> None:
+        if self._image is None or not self._points:
+            return
+        self.segment_requested.emit(self._image, self.prompt_points())
+
     # ── Image / mask transitions ─────────────────────────────────────────────
 
     def set_image(self, image: np.ndarray, path: str | None = None) -> None:
-        """Load a new image; invalidate everything derived from the old one."""
+        """Load a new image; invalidate the prompts and everything derived."""
         self._image = image
         self._image_path = path
+        self._points = []
         self._clear_derived_state()
         self.image_changed.emit(image)
+        self.prompt_points_changed.emit(self.prompt_points())
         self.mask_changed.emit(None)
         self.sticker_changed.emit(None)
 

@@ -201,10 +201,11 @@ class _OverlayGroup(QGraphicsItem):
 class ImageViewer(QWidget):
     """Interactive image viewer with zoom, pan, point annotation, and overlay rendering."""
 
-    # Signals
-    point_added = Signal(object)  # Emitted with dict: {x, y, label}
-    points_cleared = Signal()
-    undo_performed = Signal(object)  # Emitted with the removed point dict
+    # Signals — raw view intents. The session owns the canonical point list and
+    # pushes it back via set_points(); the viewer holds points only to render.
+    point_clicked = Signal(int, int, int)  # x, y, label
+    undo_requested = Signal()
+    clear_requested = Signal()
 
     # Point roles
     POSITIVE = 1
@@ -239,28 +240,6 @@ class ImageViewer(QWidget):
         # Install event filter on the view's viewport for mouse tracking
         self.view.viewport().installEventFilter(self)
         self.view.viewport().setMouseTracking(True)
-
-    # ── Properties ─────────────────────────────────────────────────────────
-
-    @property
-    def point_counts(self) -> dict[str, int]:
-        """Return a dict with 'positive' and 'negative' point counts."""
-        pos = sum(1 for p in self._points if p["label"] == self.POSITIVE)
-        neg = sum(1 for p in self._points if p["label"] == self.NEGATIVE)
-        return {"positive": pos, "negative": neg}
-
-    def prompt_points(self) -> list[dict]:
-        """The current segmentation prompt points (positive/negative clicks).
-
-        Each point is a dict with ``x``, ``y`` (image-pixel coordinates) and
-        ``label`` (1=positive, 0=negative). Returns a copy, so callers cannot
-        mutate the viewer's internal list.
-        """
-        return [dict(p) for p in self._points]
-
-    def has_prompt_points(self) -> bool:
-        """True when at least one prompt point has been placed."""
-        return bool(self._points)
 
     # ── UI setup ───────────────────────────────────────────────────────────
 
@@ -320,7 +299,7 @@ class ImageViewer(QWidget):
             QIcon.fromTheme("edit-undo", icon_undo()), "Undo", "Undo last point (Ctrl+Z)"
         )
         self._undo_btn.setEnabled(False)
-        self._undo_btn.clicked.connect(self.undo_last_point)
+        self._undo_btn.clicked.connect(self.undo_requested)
         strip_layout.addWidget(self._undo_btn)
 
         self._clear_btn = _strip_btn(
@@ -328,7 +307,7 @@ class ImageViewer(QWidget):
             "Remove all points (Ctrl+R)"
         )
         self._clear_btn.setEnabled(False)
-        self._clear_btn.clicked.connect(self.clear_points)
+        self._clear_btn.clicked.connect(self.clear_requested)
         strip_layout.addWidget(self._clear_btn)
 
         self._point_count_label = QLabel("")
@@ -348,7 +327,7 @@ class ImageViewer(QWidget):
 
         undo_sc = QShortcut(QKeySequence("Ctrl+Z"), self)
         undo_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        undo_sc.activated.connect(self.undo_last_point)
+        undo_sc.activated.connect(self.undo_requested)
 
         layout.addWidget(self._toolstrip)
 
@@ -545,35 +524,17 @@ class ImageViewer(QWidget):
 
     # ── Point operations ───────────────────────────────────────────────────
 
-    def add_point(self, x: int, y: int, label: int) -> None:
-        """Add a segmentation point in image-pixel coordinates."""
-        self._points.append({"x": x, "y": y, "label": label})
+    def set_points(self, points: list[dict]) -> None:
+        """Render the given prompt points (image-pixel coords).
+
+        Render-only: the session owns the canonical list and calls this after
+        every change. The viewer never mutates points itself — clicks go out as
+        :data:`point_clicked` and come back here.
+        """
+        self._points = [dict(p) for p in points]
         if self._overlay:
             self._overlay.set_points(self._points)
         self._update_undo_clear_buttons()
-        self.point_added.emit(self._points[-1])
-
-    def undo_last_point(self) -> None:
-        """Remove the last placed point and re-run segmentation."""
-        if not self._points:
-            return
-        removed = self._points.pop()
-        self._mask = None
-        if self._overlay:
-            self._overlay.set_points(self._points)
-            self._overlay.set_mask(None)
-        self._update_undo_clear_buttons()
-        self.undo_performed.emit(removed)
-
-    def clear_points(self) -> None:
-        """Remove all segmentation points and mask."""
-        self._points.clear()
-        self._mask = None
-        if self._overlay:
-            self._overlay.clear_all()
-        self._clear_hover_preview()
-        self._update_undo_clear_buttons()
-        self.points_cleared.emit()
 
     # ── Hover preview ──────────────────────────────────────────────────────
 
@@ -652,7 +613,7 @@ class ImageViewer(QWidget):
                     coords = self.get_image_coordinates(scene_pos)
                     if coords is not None:
                         x, y = coords
-                        self.add_point(x, y, self.NEGATIVE)
+                        self.point_clicked.emit(x, y, self.NEGATIVE)
                         self._clear_hover_preview()
                         event.accept()
                         return True
@@ -671,7 +632,7 @@ class ImageViewer(QWidget):
                             if self._annotation_mode == self.MODE_ADD_POSITIVE
                             else self.NEGATIVE
                         )
-                        self.add_point(x, y, label)
+                        self.point_clicked.emit(x, y, label)
                         self._clear_hover_preview()
                         event.accept()
                         return True
