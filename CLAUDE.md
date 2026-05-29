@@ -36,7 +36,7 @@ Entry: `main.py` → `sticker_creator.app.StickerCreatorApp` (sets KDE Breeze st
 Pipeline:
 1. Load image — `utils/file_io.ImageLoader` or clipboard via `utils/clipboard.ClipboardManager`, drop via `widgets/drop_overlay.DropOverlay`. Empty state shown by `widgets/placeholder_view.PlaceholderView`.
 2. User clicks points on `widgets/image_viewer.ImageViewer` (positive/negative prompts).
-3. `segmentation/segmenter.Segmenter` runs SAM 2 in a `QThread` via `_load_requested` / `_segment_requested` signals. Image embeddings cached per-image; predictor cached per-model.
+3. `segmentation/segmenter.Segmenter` runs SAM 2 in a `QThread` via `_load_requested` / `_segment_requested` signals. It is a thin Qt adapter over `segmentation/sam_segmenter.SamSegmenter` — the pure torch+numpy inference core (no Qt). Image embeddings cached per-image; predictor cached per-model.
 4. `utils/sticker_border.extract_sticker` + `add_white_border`, then `utils/sticker_resize.resize_to_512`.
 5. `widgets/sticker_preview.StickerPreview` shows result; save/copy via `ImageSaver` / `ClipboardManager`.
 
@@ -44,7 +44,7 @@ Workflow UX driven by `widgets/inspector_panel.InspectorPanel` (right-side contr
 
 ## SAM 2 integration — IMPORTANT
 
-`segmenter.py` carries non-obvious patches required by the current Python 3.14 / torch 2.11 / sam2 1.1 environment. Do not strip them without understanding why:
+`segmentation/sam_segmenter.py` (the pure inference core, imported by the Qt wrapper in `segmenter.py`) carries non-obvious patches required by the current Python 3.14 / torch 2.11 / sam2 1.1 environment. Do not strip them without understanding why:
 
 - `_patch_sam2_transforms()` — injects pure-torch drop-in for `sam2.utils.transforms` because `torchvision::nms` is broken under torch 2.11. Must run before `SAM2ImagePredictor` is imported.
 - `_patch_sam2_checkpoint_loading()` — forces `weights_only=False` for `build_sam2._load_checkpoint` (older pickle protocol).

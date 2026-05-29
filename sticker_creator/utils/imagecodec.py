@@ -11,30 +11,42 @@ the round-trip is verified in one place.
 from __future__ import annotations
 
 import io
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PIL import Image
-from PySide6.QtGui import QImage
+
+if TYPE_CHECKING:
+    from PySide6.QtGui import QImage
+
+# The PIL helpers below are Qt-free, so QImage is imported lazily inside the
+# two Qt converters. That keeps importing this module (and everything that
+# composes the sticker through it) from pulling in PySide6 — the load→mask→
+# sticker pipeline stays runnable headless.
 
 
-def to_qimage(rgba: np.ndarray) -> QImage:
+def to_qimage(rgba: np.ndarray) -> "QImage":
     """RGBA numpy array → owning ``QImage`` (``Format_RGBA8888``).
 
     The returned image owns its pixels (``.copy()``), so the caller may
     discard *rgba* immediately.
     """
+    from PySide6.QtGui import QImage
+
     arr = np.ascontiguousarray(rgba)
     h, w = arr.shape[:2]
     img = QImage(arr.data, w, h, w * 4, QImage.Format.Format_RGBA8888)
     return img.copy()
 
 
-def from_qimage(img: QImage) -> np.ndarray:
+def from_qimage(img: "QImage") -> np.ndarray:
     """``QImage`` (any format) → owning ``H×W×4`` uint8 RGBA numpy array.
 
     Honours the image's ``bytesPerLine`` so a padded scanline stride (which
     Qt is free to choose) does not corrupt the result.
     """
+    from PySide6.QtGui import QImage
+
     img = img.convertToFormat(QImage.Format.Format_RGBA8888)
     h, w = img.height(), img.width()
     bpl = img.bytesPerLine()

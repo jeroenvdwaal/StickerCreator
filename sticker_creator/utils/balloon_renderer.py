@@ -1,4 +1,4 @@
-"""Comic-strip speech balloon renderer.
+"""Comic-strip speech balloon renderer (pure PIL — no Qt).
 
 The balloon is composited onto the sticker RGBA array *before* the white
 sticker border is applied, so the balloon becomes part of the sticker
@@ -10,8 +10,14 @@ and **text** (no outline of its own) — the outline is supplied later by
 Placement uses the alpha channel: the balloon sits in the top-left or
 top-right empty space (whichever side has more room), above the subject's
 head, and the canvas is expanded on that side / upward when the text needs
-more room.  The tail drops diagonally to the subject's top silhouette edge
-near the mouth and stops at the edge, so it never crosses over the face.
+more room.
+
+This module uses only Pillow + numpy so the whole load→mask→sticker pipeline
+runs headless, without a Qt event loop.  PIL does not antialias filled
+shapes, so the balloon graphics are drawn on a supersampled layer and
+downscaled with LANCZOS to get smooth edges; the layer is then alpha-composited
+over the subject (subject underneath, balloon on top), matching the old
+QPainter draw order.
 """
 from __future__ import annotations
 
@@ -20,21 +26,13 @@ import re
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QPointF, QRectF
-from PySide6.QtGui import (
-    QColor,
-    QFont,
-    QFontDatabase,
-    QFontMetrics,
-    QImage,
-    QPainter,
-    QPainterPath,
-)
+from PIL import Image, ImageDraw, ImageFont
+
+from sticker_creator.utils.imagecodec import from_pil as _from_pil, to_pil as _to_pil
 
 _FONT_PATH = (
     Path(__file__).parent.parent / "resources" / "fonts" / "Bangers-Regular.ttf"
 )
-_FONT_ID: int = -2   # -2 = not yet attempted
 
 STYLE_AUTO = "auto"
 STYLE_SPEECH = "speech"
@@ -45,42 +43,42 @@ STYLE_WHISPER = "whisper"
 SIDE_LEFT = "left"
 SIDE_RIGHT = "right"
 
-_TEXT_COLOR = QColor(20, 20, 20)
-_FILL_WHITE = QColor(255, 255, 255)
-_FILL_YELLOW = QColor(255, 218, 0)
+_TEXT_COLOR = (20, 20, 20, 255)
+_WHISPER_COLOR = (90, 90, 90, 255)
+_FILL_WHITE = (255, 255, 255, 255)
+_FILL_YELLOW = (255, 218, 0, 255)
+
+# Supersampling factor for the balloon graphics layer (PIL has no shape AA).
+_SS = 4
 
 
 # ── Font ──────────────────────────────────────────────────────────────────────
 
-def _font_family() -> str:
-    global _FONT_ID
-    if _FONT_ID == -2:
-        if _FONT_PATH.exists():
-            _FONT_ID = QFontDatabase.addApplicationFont(str(_FONT_PATH))
-        else:
-            _FONT_ID = -1
-    if _FONT_ID >= 0:
-        families = QFontDatabase.applicationFontFamilies(_FONT_ID)
-        if families:
-            return families[0]
-    return "Comic Sans MS"
+def _make_font(size: int) -> ImageFont.FreeTypeFont:
+    """Bangers at *size* px, falling back to PIL's default if the TTF is absent."""
+    if _FONT_PATH.exists():
+        return ImageFont.truetype(str(_FONT_PATH), size)
+    return ImageFont.load_default(size)
 
 
-def _make_font(size: int, bold: bool = False, italic: bool = False) -> QFont:
-    f = QFont(_font_family(), size)
-    f.setBold(bold)
-    f.setItalic(italic)
-    f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 108)
-    return f
-
-
-def _style_font(resolved: str, base_size: int) -> QFont:
-    """Per-style font: shout is bold, whisper is smaller + italic (quiet)."""
-    if resolved == STYLE_SHOUT:
-        return _make_font(base_size, bold=True)
+def _style_size(resolved: str, base_size: int) -> int:
+    """Per-style point size: whisper is smaller (quiet); others use the base."""
     if resolved == STYLE_WHISPER:
-        return _make_font(max(15, int(base_size * 0.72)), italic=True)
-    return _make_font(base_size)
+        return max(15, int(base_size * 0.72))
+    return base_size
+
+
+def _line_height(font: ImageFont.FreeTypeFont) -> int:
+    ascent, descent = font.getmetrics()
+    return ascent + descent
+
+
+# Shared zero-size canvas for text measurement (no event loop needed).
+_MEASURE = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+
+def _advance(font: ImageFont.FreeTypeFont, text: str) -> float:
+    return _MEASURE.textlength(text, font=font)
 
 
 # ── Style detection ───────────────────────────────────────────────────────────
@@ -133,18 +131,18 @@ def render_balloon(
 
     # ── Font + text measurement ───────────────────────────────────────────
     base_size = max(22, w // 13)
-    font = _style_font(resolved, base_size)
-    fm = QFontMetrics(font)
+    font = _make_font(_style_size(resolved, base_size))
+    lh = _line_height(font)
 
     max_text_w = int(w * 0.58)
     pad_x, pad_y = 22, 16
 
-    lines = _wrap(text.strip(), fm, max_text_w - 2 * pad_x)
-    text_w = max(fm.horizontalAdvance(ln) for ln in lines)
-    text_h = fm.height() * len(lines)
+    lines = _wrap(text.strip(), font, max_text_w - 2 * pad_x)
+    text_w = max(_advance(font, ln) for ln in lines)
+    text_h = lh * len(lines)
 
-    balloon_w = text_w + 2 * pad_x
-    balloon_h = text_h + 2 * pad_y
+    balloon_w = int(text_w + 2 * pad_x)
+    balloon_h = int(text_h + 2 * pad_y)
 
     # ── Side selection: more empty margin wins ────────────────────────────
     _, _, subj_left, subj_right = _subject_bounds(sticker)
@@ -195,136 +193,101 @@ def render_balloon(
     # Adjusted coordinates in the new canvas
     bx = b_left + sx
     by = b_top + sy
-    balloon_rect = QRectF(bx, by, balloon_w, balloon_h)
+    balloon_rect = (float(bx), float(by), float(balloon_w), float(balloon_h))
 
-    # ── Render: subject first, balloon fill + text on top ─────────────────
-    canvas = QImage(new_w, new_h, QImage.Format.Format_ARGB32_Premultiplied)
-    canvas.fill(Qt.GlobalColor.transparent)
+    # ── Render: subject underneath, balloon fill + text on top ─────────────
+    canvas = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
+    canvas.alpha_composite(_to_pil(sticker), dest=(sx, sy))
 
-    p = QPainter(canvas)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+    # Balloon graphics on a supersampled layer for smooth (antialiased) edges.
+    layer = Image.new("RGBA", (new_w * _SS, new_h * _SS), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    ss_font = _make_font(_style_size(resolved, base_size) * _SS)
 
-    p.drawImage(sx, sy, _to_qimage(sticker))
-
-    draw = {
+    drawer = {
         STYLE_SPEECH: _draw_speech,
         STYLE_THOUGHT: _draw_thought,
         STYLE_SHOUT: _draw_shout,
         STYLE_WHISPER: _draw_whisper,
     }[resolved]
-    draw(p, balloon_rect, font, fm, lines, pad_x, pad_y)
+    drawer(draw, balloon_rect, ss_font, lines, pad_x, pad_y)
 
-    p.end()
-    return _from_qimage(canvas)
+    layer = layer.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    canvas.alpha_composite(layer)
+
+    return _from_pil(canvas)
 
 
 # ── Balloon draw functions (fill + text only; border added later) ───────────────
+#
+# Every shape is drawn in supersampled coordinates: the geometry computed in the
+# new-canvas pixel space is multiplied by ``_SS`` here, then the whole layer is
+# downscaled once in ``render_balloon``.
 
-def _fill(painter: QPainter, path: QPainterPath, color: QColor) -> None:
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(color)
-    painter.drawPath(path)
-
-
-def _draw_speech(
-    painter: QPainter,
-    rect: QRectF,
-    font: QFont,
-    fm: QFontMetrics,
-    lines: list[str],
-    pad_x: int,
-    pad_y: int,
-) -> None:
-    r = min(rect.height() * 0.38, 18.0)
-    body = QPainterPath()
-    body.addRoundedRect(rect, r, r)
-    _fill(painter, body, _FILL_WHITE)
-    _text(painter, font, fm, lines, rect, pad_x, pad_y, _TEXT_COLOR)
+def _scaled_rect(rect: tuple[float, float, float, float]):
+    x, y, w, h = rect
+    return x * _SS, y * _SS, w * _SS, h * _SS
 
 
-def _draw_whisper(
-    painter: QPainter,
-    rect: QRectF,
-    font: QFont,
-    fm: QFontMetrics,
-    lines: list[str],
-    pad_x: int,
-    pad_y: int,
-) -> None:
-    # Quiet voice: a small, very-rounded pill.  The smaller italic font (set
-    # in _style_font) carries the "whisper" read, since a dashed outline
-    # can't survive being merged into the border.
-    r = min(rect.height() * 0.5, 26.0)
-    body = QPainterPath()
-    body.addRoundedRect(rect, r, r)
-    _fill(painter, body, _FILL_WHITE)
-    _text(painter, font, fm, lines, rect, pad_x, pad_y, QColor(90, 90, 90))
+def _draw_speech(draw, rect, font, lines, pad_x, pad_y) -> None:
+    x, y, w, h = _scaled_rect(rect)
+    r = min(h * 0.38, 18.0 * _SS)
+    draw.rounded_rectangle([x, y, x + w, y + h], radius=r, fill=_FILL_WHITE)
+    _text(draw, font, lines, rect, pad_x, pad_y, _TEXT_COLOR)
 
 
-def _draw_thought(
-    painter: QPainter,
-    rect: QRectF,
-    font: QFont,
-    fm: QFontMetrics,
-    lines: list[str],
-    pad_x: int,
-    pad_y: int,
-) -> None:
-    # Dream/thought: a lumpy cloud body.
-    _fill(painter, _cloud(rect), _FILL_WHITE)
-    _text(painter, font, fm, lines, rect, pad_x, pad_y, _TEXT_COLOR)
+def _draw_whisper(draw, rect, font, lines, pad_x, pad_y) -> None:
+    # Quiet voice: a small, very-rounded pill.  The smaller font (set in
+    # _style_size) carries the "whisper" read, since a dashed outline can't
+    # survive being merged into the border.
+    x, y, w, h = _scaled_rect(rect)
+    r = min(h * 0.5, 26.0 * _SS)
+    draw.rounded_rectangle([x, y, x + w, y + h], radius=r, fill=_FILL_WHITE)
+    _text(draw, font, lines, rect, pad_x, pad_y, _WHISPER_COLOR)
 
 
-def _draw_shout(
-    painter: QPainter,
-    rect: QRectF,
-    font: QFont,
-    fm: QFontMetrics,
-    lines: list[str],
-    pad_x: int,
-    pad_y: int,
-) -> None:
-    cx = rect.center().x()
-    cy = rect.center().y()
-    rx_out = rect.width() / 2 * 1.22
-    ry_out = rect.height() / 2 * 1.22
-    rx_in = rect.width() / 2 * 0.88
-    ry_in = rect.height() / 2 * 0.88
-
-    burst = _starburst(cx, cy, rx_out, ry_out, rx_in, ry_in, spikes=16)
-    _fill(painter, burst, _FILL_YELLOW)
-    _text(painter, font, fm, lines, rect, pad_x, pad_y, _TEXT_COLOR)
-
-
-# ── Shape helpers ─────────────────────────────────────────────────────────────
-
-def _cloud(rect: QRectF) -> QPainterPath:
-    """Lumpy cloud silhouette (for dream/thought bubbles)."""
-    p = QPainterPath()
-    p.addEllipse(rect)
-    cx, cy = rect.center().x(), rect.center().y()
-    rx, ry = rect.width() / 2, rect.height() / 2
+def _draw_thought(draw, rect, font, lines, pad_x, pad_y) -> None:
+    # Dream/thought: a lumpy cloud body — main ellipse plus a ring of lobes,
+    # all the same fill so the overlapping draws union into one silhouette.
+    x, y, w, h = _scaled_rect(rect)
+    draw.ellipse([x, y, x + w, y + h], fill=_FILL_WHITE)
+    cx, cy = x + w / 2, y + h / 2
+    rx, ry = w / 2, h / 2
     bump = min(rx, ry) * 0.42
     n = 11
     for i in range(n):
         a = 2 * math.pi * i / n
         px = cx + rx * 0.96 * math.cos(a)
         py = cy + ry * 0.96 * math.sin(a)
-        lobe = QPainterPath()
-        lobe.addEllipse(QPointF(px, py), bump, bump)
-        p = p.united(lobe)
-    return p
+        draw.ellipse(
+            [px - bump, py - bump, px + bump, py + bump], fill=_FILL_WHITE
+        )
+    _text(draw, font, lines, rect, pad_x, pad_y, _TEXT_COLOR)
 
+
+def _draw_shout(draw, rect, font, lines, pad_x, pad_y) -> None:
+    x, y, w, h = _scaled_rect(rect)
+    cx, cy = x + w / 2, y + h / 2
+    rx_out, ry_out = w / 2 * 1.22, h / 2 * 1.22
+    rx_in, ry_in = w / 2 * 0.88, h / 2 * 0.88
+    pts = _starburst(cx, cy, rx_out, ry_out, rx_in, ry_in, spikes=16)
+    draw.polygon(pts, fill=_FILL_YELLOW)
+    # Shout reads as loud: fake-bold the glyphs by stroking them in the same
+    # ink (Bangers ships Regular only, so there is no real bold face).
+    stroke = max(1, getattr(font, "size", _SS) // 18)
+    _text(draw, font, lines, rect, pad_x, pad_y, _TEXT_COLOR, stroke=stroke)
+
+
+# ── Shape helpers ─────────────────────────────────────────────────────────────
 
 def _starburst(
     cx: float, cy: float,
     rx_out: float, ry_out: float,
     rx_in: float, ry_in: float,
     spikes: int = 16,
-) -> QPainterPath:
-    """Elliptical starburst (for shout bubbles)."""
-    p = QPainterPath()
+) -> list[tuple[float, float]]:
+    """Elliptical starburst polygon points (for shout bubbles)."""
+    pts: list[tuple[float, float]] = []
     total = spikes * 2
     for i in range(total):
         angle = math.pi * 2 * i / total - math.pi / 2
@@ -334,45 +297,36 @@ def _starburst(
         else:
             x = cx + rx_in * math.cos(angle)
             y = cy + ry_in * math.sin(angle)
-        if i == 0:
-            p.moveTo(x, y)
-        else:
-            p.lineTo(x, y)
-    p.closeSubpath()
-    return p
+        pts.append((x, y))
+    return pts
 
 
 # ── Text helper ───────────────────────────────────────────────────────────────
 
-def _text(
-    painter: QPainter,
-    font: QFont,
-    fm: QFontMetrics,
-    lines: list[str],
-    rect: QRectF,
-    pad_x: int,
-    pad_y: int,
-    color: QColor,
-) -> None:
-    painter.setFont(font)
-    painter.setPen(color)
-    total_h = fm.height() * len(lines)
-    y = rect.top() + (rect.height() - total_h) / 2 + fm.ascent()
+def _text(draw, font, lines, rect, pad_x, pad_y, color, stroke: int = 0) -> None:
+    """Draw centred, vertically-centred lines inside *rect* (supersampled)."""
+    x, y, w, h = _scaled_rect(rect)
+    lh = _line_height(font)
+    total_h = lh * len(lines)
+    ty = y + (h - total_h) / 2
     for line in lines:
-        lw = fm.horizontalAdvance(line)
-        x = rect.left() + (rect.width() - lw) / 2
-        painter.drawText(QPointF(x, y), line)
-        y += fm.height()
+        lw = draw.textlength(line, font=font)
+        tx = x + (w - lw) / 2
+        draw.text(
+            (tx, ty), line, font=font, fill=color, anchor="la",
+            stroke_width=stroke, stroke_fill=color,
+        )
+        ty += lh
 
 
-def _wrap(text: str, fm: QFontMetrics, max_width: int) -> list[str]:
+def _wrap(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
     """Word-wrap *text* to fit within *max_width* pixels."""
     words = text.split()
     lines: list[str] = []
     current = ""
     for word in words:
         candidate = f"{current} {word}".strip()
-        if fm.horizontalAdvance(candidate) <= max_width:
+        if _advance(font, candidate) <= max_width:
             current = candidate
         else:
             if current:
@@ -414,11 +368,3 @@ def _side_edge_in_band(
     if cols.size == 0:
         return default_right if side == SIDE_RIGHT else default_left
     return int(cols.max()) if side == SIDE_RIGHT else int(cols.min())
-
-
-# ── QImage ↔ numpy ────────────────────────────────────────────────────────────
-
-from sticker_creator.utils.imagecodec import (  # noqa: E402
-    to_qimage as _to_qimage,
-    from_qimage as _from_qimage,
-)
