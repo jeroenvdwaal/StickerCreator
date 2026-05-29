@@ -11,7 +11,6 @@ import re
 import time
 from pathlib import Path
 
-import numpy as np
 from PySide6.QtCore import Qt, QSize, Slot
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
@@ -31,9 +30,10 @@ from PySide6.QtWidgets import (
 
 from sticker_creator.segmentation.segmenter import Segmenter
 from sticker_creator.session import StickerSession
+from sticker_creator.workflow import StickerWorkflow
 from sticker_creator.utils.clipboard import ClipboardManager
-from sticker_creator.utils.file_io import ImageLoader, ImageSaver
-from sticker_creator.utils.sticker_pipeline import resize_for_whatsapp
+from sticker_creator.utils.file_io import ImageLoader
+from sticker_creator.utils.sticker_export import ExportFormat, export_sticker
 from sticker_creator.utils.icons import icon_undo, icon_clear
 from sticker_creator.utils.settings import Keys, get_settings
 from sticker_creator.widgets.drop_overlay import ACCEPTED_EXTENSIONS, DropOverlay
@@ -85,8 +85,11 @@ class MainWindow(QMainWindow):
         # Services
         self.segmenter = Segmenter()
         self.image_loader = ImageLoader()
-        self.image_saver = ImageSaver()
         self.clipboard_manager = ClipboardManager()
+
+        # Routes clicks → segment → mask back into the session; the window only
+        # listens for the no-model prompt and the UI-local timing/busy concerns.
+        self.workflow = StickerWorkflow(self.session, self.segmenter, self)
 
         # Overlays (must exist before connections — model load may emit early)
         self._toast = ToastOverlay(self)
@@ -281,12 +284,15 @@ class MainWindow(QMainWindow):
         # Session — workflow state drives the widgets through these signals.
         self.session.image_changed.connect(self._on_session_image_changed)
         self.session.prompt_points_changed.connect(self._on_session_points_changed)
-        self.session.segment_requested.connect(self._on_segment_requested)
         self.session.mask_changed.connect(self.image_viewer.set_mask)
         self.session.border_width_changed.connect(self.inspector.set_border_width)
         self.session.sticker_changed.connect(self._on_session_sticker_changed)
 
-        # Segmenter
+        # Workflow — the session ↔ segmenter routing fires this when a click
+        # arrives with no model loaded.
+        self.workflow.model_required.connect(self._on_model_required)
+
+        # Segmenter — UI-local feedback only (routing lives in the workflow).
         self.segmenter.model_loaded.connect(self._on_model_loaded)
         self.segmenter.model_error.connect(self._on_model_error)
         self.segmenter.mask_ready.connect(self._on_mask_ready)
@@ -307,11 +313,7 @@ class MainWindow(QMainWindow):
         # Inspector
         self.inspector.save_requested.connect(self._on_save_sticker)
         self.inspector.copy_requested.connect(self._on_copy_sticker)
-        self.inspector.border_toggled.connect(self._on_border_toggled)
-        self.inspector.border_width_changed.connect(self._on_border_width_changed)
-        self.inspector.background_changed.connect(self._on_background_changed)
-        self.inspector.balloon_text_changed.connect(self._on_balloon_text_changed)
-        self.inspector.balloon_style_changed.connect(self._on_balloon_style_changed)
+        self.inspector.options_changed.connect(self.session.set_options)
 
     # ── Image loading ──────────────────────────────────────────────────────
 
@@ -365,22 +367,19 @@ class MainWindow(QMainWindow):
 
     # ── Segmentation events ────────────────────────────────────────────────
 
-    @Slot(object, object)
-    def _on_segment_requested(self, image, points: list[dict]) -> None:
-        """Dispatch a session segmentation request to the background service."""
-        if self.segmenter.active_model_name is None:
-            self._status.showMessage("A segmentation model is required.", 4000)
-            return
-        self.segmenter.segment(image=image, points=points)
+    @Slot()
+    def _on_model_required(self) -> None:
+        """A click arrived with no model loaded; prompt for one."""
+        self._status.showMessage("A segmentation model is required.", 4000)
 
     @Slot(object)
-    def _on_mask_ready(self, mask: np.ndarray) -> None:
+    def _on_mask_ready(self, _mask: object) -> None:
+        # The workflow feeds the mask into the session; the window only reports
+        # the round-trip time.
         if self._seg_start_time is not None:
             elapsed = time.time() - self._seg_start_time
             self._status.showMessage(f"Segmented in {elapsed:.2f}s", 3000)
             self._seg_start_time = None
-
-        self.session.set_mask(mask)
 
     @Slot()
     def _on_seg_started(self) -> None:
@@ -434,28 +433,6 @@ class MainWindow(QMainWindow):
         models = self.segmenter.available_models()
         self.placeholder.set_models(models, self.segmenter.active_model_name)
 
-    # ── Border / Background ────────────────────────────────────────────────
-
-    @Slot(bool)
-    def _on_border_toggled(self, enabled: bool) -> None:
-        self.session.set_border_enabled(enabled)
-
-    @Slot(int)
-    def _on_border_width_changed(self, width: int) -> None:
-        self.session.set_border_width(width)
-
-    @Slot(str)
-    def _on_background_changed(self, color: str) -> None:
-        self.session.set_background(color)
-
-    @Slot(str)
-    def _on_balloon_text_changed(self, text: str) -> None:
-        self.session.set_balloon_text(text)
-
-    @Slot(str)
-    def _on_balloon_style_changed(self, style: str) -> None:
-        self.session.set_balloon_style(style)
-
     # ── Save / Copy ────────────────────────────────────────────────────────
 
     @Slot()
@@ -487,13 +464,13 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
         path = Path(file_path)
-        is_whatsapp = "WhatsApp Sticker" in (selected_filter or "")
-        if is_whatsapp:
-            self.image_saver.save_webp(resize_for_whatsapp(sticker), path, quality=80)
+        if "WhatsApp Sticker" in (selected_filter or ""):
+            fmt = ExportFormat.WHATSAPP_WEBP
         elif path.suffix.lower() == ".webp":
-            self.image_saver.save_webp(sticker, path, quality=100)
+            fmt = ExportFormat.WEBP
         else:
-            self.image_saver.save_png(sticker, path)
+            fmt = ExportFormat.PNG
+        export_sticker(sticker, path, fmt)
         settings.setValue(Keys.LAST_SAVE_DIR, str(path.parent))
         self._toast.show_success(f"Saved: {path.name}")
 

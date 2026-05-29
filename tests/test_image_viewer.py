@@ -5,18 +5,9 @@ that only require numpy and OpenCV — no QApplication needed.
 """
 
 import numpy as np
-import cv2
 
+from sticker_creator.widgets.mask_contours import mask_to_contours as _mask_to_contours
 from sticker_creator.widgets.view_transform import ViewTransform
-
-
-def _mask_to_contours(mask: np.ndarray) -> list[np.ndarray]:
-    """Extract contour polylines from a binary mask using OpenCV."""
-    mask_uint8 = (mask > 0).astype(np.uint8) * 255
-    contours, _ = cv2.findContours(
-        mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-    return contours
 
 
 def _contour_to_points(contour: np.ndarray) -> list[tuple[float, float]]:
@@ -25,7 +16,7 @@ def _contour_to_points(contour: np.ndarray) -> list[tuple[float, float]]:
 
 
 class TestMaskToContours:
-    """Tests for _mask_to_contours helper."""
+    """Tests for the shared mask_to_contours helper."""
 
     def test_empty_mask(self):
         """An all-zero mask produces no contours."""

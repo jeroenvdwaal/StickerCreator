@@ -23,20 +23,18 @@ listens to :data:`segment_requested` and feeds masks back via :meth:`set_mask`.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 from PySide6.QtCore import QObject, Signal
 
-from sticker_creator.utils.sticker_border import (
-    BACKGROUND_TRANSPARENT,
-    apply_background,
-)
+from sticker_creator.utils.sticker_border import apply_background
 from sticker_creator.utils.sticker_pipeline import (
     StickerOptions,
     auto_border_width,
     build_raw_sticker,
     compose_sticker,
 )
-from sticker_creator.utils.balloon_renderer import STYLE_AUTO
 
 
 class StickerSession(QObject):
@@ -76,11 +74,8 @@ class StickerSession(QObject):
         self._raw_sticker: np.ndarray | None = None
         self._current_sticker: np.ndarray | None = None
 
-        self._border_enabled: bool = True
-        self._border_width: int = 7
-        self._background: str = BACKGROUND_TRANSPARENT
-        self._balloon_text: str = ""
-        self._balloon_style: str = STYLE_AUTO
+        # The single currency for everything the user controls about composition.
+        self._options = StickerOptions()
 
     # ── Queries ──────────────────────────────────────────────────────────────
 
@@ -99,7 +94,7 @@ class StickerSession(QObject):
 
     @property
     def balloon_text(self) -> str:
-        return self._balloon_text
+        return self._options.balloon_text
 
     @property
     def has_sticker(self) -> bool:
@@ -173,8 +168,10 @@ class StickerSession(QObject):
             return
         self._mask = mask
         self._raw_sticker = build_raw_sticker(self._image, mask)
-        self._border_width = auto_border_width(self._raw_sticker)
-        self.border_width_changed.emit(self._border_width)
+        self._options = replace(
+            self._options, border_width=auto_border_width(self._raw_sticker)
+        )
+        self.border_width_changed.emit(self._options.border_width)
         self.mask_changed.emit(mask)
         self._recompose()
 
@@ -191,25 +188,34 @@ class StickerSession(QObject):
 
     # ── Compose options ──────────────────────────────────────────────────────
 
+    def set_options(self, options: StickerOptions) -> None:
+        """Replace the whole compose-option bundle and re-derive the sticker.
+
+        The single entry point the inspector drives — one signal, one currency.
+        The granular setters below remain for headless/test convenience.
+        """
+        self._options = options
+        self._recompose()
+
     def set_border_enabled(self, enabled: bool) -> None:
-        self._border_enabled = enabled
+        self._options = replace(self._options, border_enabled=enabled)
         self._recompose()
 
     def set_border_width(self, width: int) -> None:
-        self._border_width = width
-        if self._border_enabled:
+        self._options = replace(self._options, border_width=width)
+        if self._options.border_enabled:
             self._recompose()
 
     def set_background(self, color: str) -> None:
-        self._background = color
+        self._options = replace(self._options, background=color)
         self._recompose()
 
     def set_balloon_text(self, text: str) -> None:
-        self._balloon_text = text
+        self._options = replace(self._options, balloon_text=text)
         self._recompose()
 
     def set_balloon_style(self, style: str) -> None:
-        self._balloon_style = style
+        self._options = replace(self._options, balloon_style=style)
         self._recompose()
 
     # ── Compose ──────────────────────────────────────────────────────────────
@@ -220,12 +226,7 @@ class StickerSession(QObject):
             self._current_sticker = None
             self.sticker_changed.emit(None)
             return
-        options = StickerOptions(
-            border_enabled=self._border_enabled,
-            border_width=self._border_width,
-            balloon_text=self._balloon_text,
-            balloon_style=self._balloon_style,
-            background=self._background,
+        self._current_sticker = compose_sticker(self._raw_sticker, self._options)
+        self.sticker_changed.emit(
+            apply_background(self._current_sticker, self._options.background)
         )
-        self._current_sticker = compose_sticker(self._raw_sticker, options)
-        self.sticker_changed.emit(apply_background(self._current_sticker, self._background))

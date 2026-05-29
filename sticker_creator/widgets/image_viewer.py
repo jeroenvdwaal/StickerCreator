@@ -5,7 +5,6 @@ segmentation points, and renders the SAM 2 mask boundary overlay with
 semi-transparent coloring.
 """
 
-import cv2
 import numpy as np
 
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QLineF, QEvent, QSize, QTimer
@@ -44,6 +43,7 @@ from sticker_creator.utils.icons import (
     icon_undo,
     icon_clear,
 )
+from sticker_creator.widgets.mask_contours import mask_to_contours
 from sticker_creator.widgets.view_transform import ViewTransform
 
 
@@ -52,16 +52,6 @@ _OVERLAY_ICON_SIZE = QSize(18, 18)
 
 
 # ─── Helper: compute contour poly from mask ───────────────────────────────
-
-
-def _mask_to_contours(mask: np.ndarray) -> list[np.ndarray]:
-    """Extract contour polylines from a binary mask using OpenCV."""
-    mask_uint8 = (mask > 0).astype(np.uint8) * 255
-    contours, _ = cv2.findContours(
-        mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-    # OpenCV 4.13+ returns contours as a tuple; convert to list for mutation (.clear())
-    return list(contours)
 
 
 def _contour_to_polygon(contour: np.ndarray) -> QPolygonF:
@@ -110,7 +100,7 @@ class _OverlayGroup(QGraphicsItem):
     def set_mask(self, mask: np.ndarray | None):
         self._mask = mask
         if mask is not None:
-            self._contours = _mask_to_contours(mask)
+            self._contours = mask_to_contours(mask)
         else:
             self._contours = []
         self.update()

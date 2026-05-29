@@ -29,6 +29,8 @@ from sticker_creator.widgets.sticker_preview import StickerPreview
 from sticker_creator.utils.balloon_renderer import (
     STYLE_AUTO, STYLE_SPEECH, STYLE_THOUGHT, STYLE_SHOUT, STYLE_WHISPER,
 )
+from sticker_creator.utils.sticker_border import BACKGROUND_TRANSPARENT
+from sticker_creator.utils.sticker_pipeline import StickerOptions
 
 
 _SWATCH_PX = 16
@@ -69,11 +71,7 @@ class InspectorPanel(QWidget):
 
     save_requested = Signal()
     copy_requested = Signal()
-    border_toggled = Signal(bool)
-    border_width_changed = Signal(int)
-    background_changed = Signal(str)
-    balloon_text_changed = Signal(str)
-    balloon_style_changed = Signal(str)
+    options_changed = Signal(object)  # StickerOptions — one currency for all controls
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -189,7 +187,7 @@ class InspectorPanel(QWidget):
         self._balloon_debounce = QTimer(self)
         self._balloon_debounce.setSingleShot(True)
         self._balloon_debounce.setInterval(900)
-        self._balloon_debounce.timeout.connect(self._emit_balloon_text)
+        self._balloon_debounce.timeout.connect(self._emit_options)
         self._balloon_input.textChanged.connect(lambda _: self._balloon_debounce.start())
         self._balloon_input.editingFinished.connect(self._commit_balloon_text)
 
@@ -249,29 +247,45 @@ class InspectorPanel(QWidget):
 
     # ── Slots ───────────────────────────────────────────────────────────────
 
+    def _current_options(self) -> StickerOptions:
+        """Snapshot every control into the single option bundle."""
+        style_btn = self._style_group.checkedButton()
+        bg_btn = self._bg_group.checkedButton()
+        return StickerOptions(
+            border_enabled=self._border_check.isChecked(),
+            border_width=self._width_slider.value(),
+            balloon_text=self._balloon_input.text(),
+            balloon_style=(
+                style_btn.property("style_value") if style_btn else STYLE_AUTO
+            ),
+            background=(
+                bg_btn.property("bg_value") if bg_btn else BACKGROUND_TRANSPARENT
+            ),
+        )
+
+    def _emit_options(self) -> None:
+        self.options_changed.emit(self._current_options())
+
     def _on_border_toggled(self, enabled: bool) -> None:
         self._width_slider.setEnabled(enabled)
         self._width_label.setEnabled(enabled)
-        self.border_toggled.emit(enabled)
+        self._emit_options()
 
     def _on_width_changed(self, value: int) -> None:
         self._width_label.setText(f"{value} px")
-        self.border_width_changed.emit(value)
+        self._emit_options()
 
     def _on_bg_clicked(self, button) -> None:
-        self.background_changed.emit(button.property("bg_value"))
-
-    def _emit_balloon_text(self) -> None:
-        self.balloon_text_changed.emit(self._balloon_input.text())
+        self._emit_options()
 
     def _commit_balloon_text(self) -> None:
         """Flush pending debounce immediately (Enter pressed or focus lost)."""
         if self._balloon_debounce.isActive():
             self._balloon_debounce.stop()
-            self._emit_balloon_text()
+            self._emit_options()
 
     def _on_style_clicked(self, button) -> None:
-        self.balloon_style_changed.emit(button.property("style_value"))
+        self._emit_options()
 
     # ── Public API ──────────────────────────────────────────────────────────
 
