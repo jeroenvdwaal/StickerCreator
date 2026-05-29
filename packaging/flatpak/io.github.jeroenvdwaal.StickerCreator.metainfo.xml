@@ -52,18 +52,18 @@
     <keyword>Telegram</keyword>
   </keywords>
 
-  <url type="homepage">https://github.com/jeroenvdwaal/sticker-creator</url>
-  <url type="bugtracker">https://github.com/jeroenvdwaal/sticker-creator/issues</url>
-  <url type="vcs-browser">https://github.com/jeroenvdwaal/sticker-creator</url>
+  <url type="homepage">https://github.com/jeroenvdwaal/StickerCreator</url>
+  <url type="bugtracker">https://github.com/jeroenvdwaal/StickerCreator/issues</url>
+  <url type="vcs-browser">https://github.com/jeroenvdwaal/StickerCreator</url>
 
   <screenshots>
     <screenshot type="default">
       <caption>Main window with a selected sticker preview</caption>
-      <image>https://raw.githubusercontent.com/jeroenvdwaal/sticker-creator/main/docs/demo_frames/05_final.png</image>
+      <image>https://raw.githubusercontent.com/jeroenvdwaal/StickerCreator/main/docs/demo_frames/05_final.png</image>
     </screenshot>
     <screenshot>
       <caption>Click points to refine the AI selection</caption>
-      <image>https://raw.githubusercontent.com/jeroenvdwaal/sticker-creator/main/docs/demo_frames/02_face_click.png</image>
+      <image>https://raw.githubusercontent.com/jeroenvdwaal/StickerCreator/main/docs/demo_frames/02_face_click.png</image>
     </screenshot>
   </screenshots>
 

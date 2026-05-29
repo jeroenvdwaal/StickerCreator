@@ -11,7 +11,7 @@ setup(
     long_description_content_type="text/markdown",
     author="Jeroen van der Waal",
     author_email="jeroenvdwaal@gmail.com",
-    url="https://github.com/jeroenvdwaal/sticker-creator",
+    url="https://github.com/jeroenvdwaal/StickerCreator",
     license="GPLv3+",
     packages=find_packages(),
     py_modules=["main"],
