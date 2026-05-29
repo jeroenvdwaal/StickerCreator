@@ -24,8 +24,6 @@ from sticker_creator.segmentation.model_registry import (
     config_name as _model_config_name,
 )
 
-# Project root for model checkpoint discovery
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_MODEL_DIR = user_model_dir()
 
 
