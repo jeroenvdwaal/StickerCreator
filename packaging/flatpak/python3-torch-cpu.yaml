@@ -1,0 +1,35 @@
+# Hand-crafted CPU-only torch wheel module.
+# Pinned: torch 2.11.0+cpu, cp313 (matches io.qt.PySide.BaseApp//6.10 Python 3.13)
+# Source: https://download.pytorch.org/whl/cpu/torch/
+# Runtime deps NOT bundled here (filelock, sympy, networkx, jinja2, fsspec,
+# typing_extensions, mpmath, MarkupSafe, setuptools<82). Include the
+# python3-torch-deps.yaml module BEFORE this one in the main manifest.
+name: python3-torch-cpu
+buildsystem: simple
+build-commands:
+  - pip3 install --verbose --exists-action=i --no-index
+      --find-links="file://${PWD}"
+      --prefix=${FLATPAK_DEST}
+      --no-deps --no-build-isolation
+      torch
+sources:
+  - type: file
+    url: https://download.pytorch.org/whl/cpu/torch-2.11.0%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl
+    sha256: 45025d7752dbc6b4c784c03afaee9c5f19730ce084b2e43fc9a2fe1677d9ff86
+    dest-filename: torch-2.11.0+cpu-cp313-cp313-manylinux_2_28_x86_64.whl
+    only-arches:
+      - x86_64
+    x-checker-data:
+      type: html
+      url: https://download.pytorch.org/whl/cpu/torch/
+      pattern: (https://download[^"]*torch-(\d[\d.]*)%2Bcpu-cp313-cp313-manylinux_2_28_x86_64\.whl)#sha256=([0-9a-f]+)
+  - type: file
+    url: https://download.pytorch.org/whl/cpu/torch-2.11.0%2Bcpu-cp313-cp313-manylinux_2_28_aarch64.whl
+    sha256: 48b3e21a311445acdd0b27f13830e21d93adef70d4721e051e9f059baeb9b8f9
+    dest-filename: torch-2.11.0+cpu-cp313-cp313-manylinux_2_28_aarch64.whl
+    only-arches:
+      - aarch64
+    x-checker-data:
+      type: html
+      url: https://download.pytorch.org/whl/cpu/torch/
+      pattern: (https://download[^"]*torch-(\d[\d.]*)%2Bcpu-cp313-cp313-manylinux_2_28_aarch64\.whl)#sha256=([0-9a-f]+)

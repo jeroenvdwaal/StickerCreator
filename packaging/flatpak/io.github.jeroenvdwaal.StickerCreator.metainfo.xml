@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.jeroenvdwaal.StickerCreator</id>
+
+  <name>Sticker Creator</name>
+  <summary>Extract transparent stickers from images with AI</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <developer id="io.github.jeroenvdwaal">
+    <name>Jeroen van der Waal</name>
+  </developer>
+
+  <launchable type="desktop-id">io.github.jeroenvdwaal.StickerCreator.desktop</launchable>
+
+  <description>
+    <p>
+      Sticker Creator lets you paste or open an image, click the subject,
+      and export a transparent 512×512 sticker suitable for WhatsApp,
+      Telegram or any messenger that accepts PNG stickers.
+    </p>
+    <p>
+      Segmentation runs entirely on-device using Meta's Segment Anything 2
+      (SAM 2) model. No image is uploaded.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Open files, paste from clipboard, or drag-and-drop an image</li>
+      <li>One-click subject selection with positive/negative prompts</li>
+      <li>Optional white sticker border</li>
+      <li>Output as 512×512 transparent PNG</li>
+      <li>Save to disk or copy to clipboard</li>
+      <li>KDE Breeze integration</li>
+    </ul>
+  </description>
+
+  <categories>
+    <category>Graphics</category>
+    <category>Photography</category>
+    <category>Qt</category>
+    <category>KDE</category>
+  </categories>
+
+  <keywords>
+    <keyword>sticker</keyword>
+    <keyword>segmentation</keyword>
+    <keyword>SAM2</keyword>
+    <keyword>transparent</keyword>
+    <keyword>cutout</keyword>
+    <keyword>WhatsApp</keyword>
+    <keyword>Telegram</keyword>
+  </keywords>
+
+  <url type="homepage">https://github.com/jeroenvdwaal/sticker-creator</url>
+  <url type="bugtracker">https://github.com/jeroenvdwaal/sticker-creator/issues</url>
+  <url type="vcs-browser">https://github.com/jeroenvdwaal/sticker-creator</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main window with a selected sticker preview</caption>
+      <image>https://raw.githubusercontent.com/jeroenvdwaal/sticker-creator/main/docs/demo_frames/05_final.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Click points to refine the AI selection</caption>
+      <image>https://raw.githubusercontent.com/jeroenvdwaal/sticker-creator/main/docs/demo_frames/02_face_click.png</image>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="1.0.0" date="2026-05-28">
+      <description>
+        <p>Initial public release.</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1" />
+
+  <provides>
+    <binary>sticker-creator</binary>
+  </provides>
+
+  <requires>
+    <display_length compare="ge">768</display_length>
+    <internet>first-run</internet>
+  </requires>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+</component>

@@ -1,0 +1,290 @@
+/*
+ * Sticker Creator stylesheet — Breeze-native base with KDE HIG-aligned structure.
+ * All colors derive from the active palette so the app tracks the system theme.
+ */
+
+/* ── Typography ──────────────────────────────────────────────────────────── */
+
+QLabel#PlaceholderHeading {
+    font-size: 18px;
+    font-weight: 600;
+    color: palette(text);
+}
+
+QLabel#PlaceholderBody {
+    color: palette(placeholder-text);
+}
+
+QLabel#DialogHeading {
+    font-size: 16px;
+    font-weight: 600;
+    color: palette(text);
+}
+
+QLabel#DialogSubtitle {
+    color: palette(placeholder-text);
+}
+
+QLabel#InspectorSection {
+    font-size: 11px;
+    font-weight: 600;
+    color: palette(placeholder-text);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+QLabel#InspectorHint {
+    color: palette(placeholder-text);
+    font-size: 11px;
+}
+
+QLabel#StatusModelLabel {
+    color: palette(placeholder-text);
+    font-size: 11px;
+}
+
+/* ── Primary / Secondary action buttons ─────────────────────────────────── */
+
+QPushButton#PrimaryButton {
+    background: palette(highlight);
+    color: palette(highlighted-text);
+    border: 1px solid palette(highlight);
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-weight: 600;
+}
+
+QPushButton#PrimaryButton:hover {
+    background: palette(highlight);
+    border-color: palette(highlighted-text);
+}
+
+QPushButton#PrimaryButton:disabled {
+    background: palette(button);
+    color: palette(placeholder-text);
+    border-color: palette(mid);
+}
+
+QPushButton#SecondaryButton {
+    border-radius: 4px;
+    padding: 6px 14px;
+}
+
+/* ── Inspector panel ─────────────────────────────────────────────────────── */
+
+QFrame#InspectorSeparator {
+    color: palette(mid);
+    margin: 0;
+}
+
+/* Sticker preview canvas */
+QGraphicsView#StickerPreviewWidget {
+    background: palette(base);
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+}
+
+/* Background swatch toggle buttons */
+QToolButton#BgSwatchButton {
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    padding: 3px 7px;
+    background: palette(button);
+    font-size: 11px;
+}
+
+QToolButton#BgSwatchButton:hover {
+    background: palette(alternate-base);
+    border-color: palette(highlight);
+}
+
+QToolButton#BgSwatchButton:checked {
+    background: palette(highlight);
+    color: palette(highlighted-text);
+    border-color: palette(highlight);
+}
+
+/* ── Annotation toolbar mode buttons ─────────────────────────────────────── */
+
+QToolButton#ModeButton {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 3px 8px;
+}
+
+QToolButton#ModeButton:hover {
+    background: palette(alternate-base);
+    border-color: palette(mid);
+}
+
+QToolButton#ModeButton:checked {
+    background: palette(highlight);
+    color: palette(highlighted-text);
+    border-color: palette(highlight);
+}
+
+QToolButton#ModeButton:disabled {
+    color: palette(placeholder-text);
+}
+
+/* ── Model Manager dialog ─────────────────────────────────────────────────── */
+
+QLabel#CardTitle {
+    font-size: 14px;
+    font-weight: 600;
+    color: palette(text);
+}
+
+QLabel#CardSubtitle {
+    color: palette(text);
+}
+
+QLabel#CardMeta {
+    color: palette(placeholder-text);
+    font-size: 11px;
+}
+
+QFrame#ModelCard {
+    background: palette(base);
+    border: 1px solid palette(mid);
+    border-radius: 8px;
+}
+
+QFrame#ModelCard:hover {
+    background: palette(alternate-base);
+}
+
+QFrame#ModelCard[state="active"] {
+    background: palette(alternate-base);
+    border: 2px solid palette(highlight);
+}
+
+QFrame#ModelCard[state="downloading"] {
+    border-color: palette(highlight);
+}
+
+/* ── Inline alert (placeholder screen) ──────────────────────────────────── */
+
+QFrame#InlineAlert {
+    background: rgba(245, 195, 66, 0.14);
+    border: 1px solid rgba(245, 195, 66, 0.45);
+    border-radius: 4px;
+}
+
+QFrame#InlineAlert[severity="error"] {
+    background: rgba(218, 68, 83, 0.10);
+    border-color: rgba(218, 68, 83, 0.45);
+}
+
+QFrame#InlineAlert[severity="info"] {
+    background: rgba(61, 174, 233, 0.10);
+    border-color: rgba(61, 174, 233, 0.45);
+}
+
+/* ── Image viewer embedded toolstrip ────────────────────────────────────── */
+
+QFrame#ViewerToolstrip {
+    background: palette(window);
+    border-bottom: 1px solid palette(mid);
+}
+
+QToolButton#StripButton {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 3px 8px;
+    margin: 1px;
+}
+
+QToolButton#StripButton:hover {
+    background: palette(alternate-base);
+    border-color: palette(mid);
+}
+
+QToolButton#StripButton:checked {
+    background: palette(highlight);
+    color: palette(highlighted-text);
+    border-color: palette(highlight);
+}
+
+QToolButton#StripButton:disabled {
+    color: palette(placeholder-text);
+}
+
+QFrame#StripSeparator {
+    color: palette(mid);
+    margin: 4px 4px;
+}
+
+QLabel#PointCountLabel {
+    color: palette(placeholder-text);
+    font-size: 11px;
+    padding: 0 4px;
+}
+
+/* ── Image viewer floating overlays ─────────────────────────────────────── */
+
+QFrame#ViewerOverlay {
+    background: rgba(40, 40, 40, 200);
+    border-radius: 6px;
+}
+
+QToolButton#ViewerOverlayButton {
+    padding: 4px 6px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #f0f0f0;
+}
+
+QToolButton#ViewerOverlayButton:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+QToolButton#ViewerOverlayButton:checked {
+    background: palette(highlight);
+    color: palette(highlighted-text);
+}
+
+QToolButton#ViewerOverlayButton:disabled {
+    color: rgba(240, 240, 240, 0.35);
+}
+
+QFrame#ViewerOverlay QFrame[frameShape="5"] {
+    color: rgba(255, 255, 255, 0.25);
+    margin: 2px 4px;
+}
+
+QLabel#ZoomLabel {
+    color: #f0f0f0;
+    padding: 0 4px;
+}
+
+QLabel#ViewerHint {
+    background: rgba(40, 40, 40, 180);
+    color: #f0f0f0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+QFrame#BusyOverlay {
+    background: rgba(20, 20, 20, 160);
+}
+
+QFrame#BusyOverlay QLabel#BusyLabel {
+    color: #f5f5f5;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QFrame#BusyOverlay QProgressBar {
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    height: 8px;
+}
+
+QFrame#BusyOverlay QProgressBar::chunk {
+    background: palette(highlight);
+    border-radius: 4px;
+}

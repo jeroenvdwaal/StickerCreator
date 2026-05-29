@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Model checkpoints (large binary files, downloaded separately)
+models/*.pt
+models/*.pth
+
+# IDE / editor — keep launch config in repo
+.VSCodeCounter/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Packaging build artifacts
+*.AppImage
+packaging/flatpak/build-dir/
+packaging/flatpak/.flatpak-builder/
+packaging/flatpak/repo/
+packaging/flatpak/*.flatpak
+
+# PyPI build artifacts
+*.whl
+*.tar.gz
+
+# Logs
+*.log
+
+# Claude Code session/local state
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+
+# Generated QtHelp build outputs
+build/qthelp/

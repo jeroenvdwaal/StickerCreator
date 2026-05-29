@@ -1,0 +1,7 @@
+PySide6>=6.5
+torch>=2.0
+sam2>=1.0
+opencv-python>=4.8
+numpy>=1.24
+Pillow>=10.0
+requests>=2.31

@@ -1,0 +1,76 @@
+# Flatpak manifest for Sticker Creator.
+#
+# Build (local):
+#   flatpak install -y flathub org.kde.Platform//6.10 org.kde.Sdk//6.10 \
+#                              io.qt.PySide.BaseApp//6.10
+#   flatpak-builder --force-clean --user --install-deps-from=flathub \
+#       build-dir packaging/flatpak/io.github.jeroenvdwaal.StickerCreator.yml
+#
+# Install + run:
+#   flatpak-builder --user --install --force-clean \
+#       build-dir packaging/flatpak/io.github.jeroenvdwaal.StickerCreator.yml
+#   flatpak run io.github.jeroenvdwaal.StickerCreator
+
+id: io.github.jeroenvdwaal.StickerCreator
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+base: io.qt.PySide.BaseApp
+base-version: '6.10'
+
+command: sticker-creator
+
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
+
+finish-args:
+  - --share=ipc
+  - --share=network              # first-run SAM 2 checkpoint download
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=xdg-pictures
+  - --filesystem=xdg-download
+  - --filesystem=xdg-documents
+
+cleanup:
+  - '*.la'
+  - '*.a'
+  - /lib/python3.13/site-packages/*/tests
+  - /lib/python3.13/site-packages/*/test
+  - /lib/python3.13/site-packages/**/__pycache__
+
+modules:
+  - python3-light-deps.yaml
+  - python3-torch-deps.yaml
+  - python3-torch-cpu.yaml
+  - python3-torchvision-cpu.yaml
+  - python3-sam2-deps.yaml
+  - python3-sam2.yaml
+
+  - name: sticker-creator
+    buildsystem: simple
+    build-commands:
+      # Install the Python package.
+      - PYTHONPATH=${FLATPAK_DEST}/lib/python3.13/site-packages
+          pip3 install --verbose --exists-action=i
+          --prefix=${FLATPAK_DEST}
+          --no-deps --no-build-isolation .
+
+      # Desktop file (renamed to app-id).
+      - install -Dm644 sticker-creator.desktop
+          ${FLATPAK_DEST}/share/applications/io.github.jeroenvdwaal.StickerCreator.desktop
+      - desktop-file-edit
+          --set-icon=io.github.jeroenvdwaal.StickerCreator
+          ${FLATPAK_DEST}/share/applications/io.github.jeroenvdwaal.StickerCreator.desktop
+
+      # Icon (SVG → scalable hicolor).
+      - install -Dm644 sticker_creator/resources/icons/app_icon.svg
+          ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/io.github.jeroenvdwaal.StickerCreator.svg
+
+      # AppStream metainfo.
+      - install -Dm644 packaging/flatpak/io.github.jeroenvdwaal.StickerCreator.metainfo.xml
+          ${FLATPAK_DEST}/share/metainfo/io.github.jeroenvdwaal.StickerCreator.metainfo.xml
+    sources:
+      - type: dir
+        path: ../../

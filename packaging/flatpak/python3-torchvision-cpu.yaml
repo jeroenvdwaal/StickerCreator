@@ -1,0 +1,33 @@
+# Hand-crafted CPU-only torchvision wheel module.
+# Pinned: torchvision 0.26.0+cpu (pairs with torch 2.11.0+cpu), cp313.
+# Source: https://download.pytorch.org/whl/cpu/torchvision/
+# Include AFTER python3-torch-cpu in the main manifest.
+name: python3-torchvision-cpu
+buildsystem: simple
+build-commands:
+  - pip3 install --verbose --exists-action=i --no-index
+      --find-links="file://${PWD}"
+      --prefix=${FLATPAK_DEST}
+      --no-deps --no-build-isolation
+      torchvision
+sources:
+  - type: file
+    url: https://download.pytorch.org/whl/cpu/torchvision-0.26.0%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl
+    sha256: 16c4f11eda096dc377e82238c8ebb26c7013622c0f1b2c4dcf85fc70f96c0ea7
+    dest-filename: torchvision-0.26.0+cpu-cp313-cp313-manylinux_2_28_x86_64.whl
+    only-arches:
+      - x86_64
+    x-checker-data:
+      type: html
+      url: https://download.pytorch.org/whl/cpu/torchvision/
+      pattern: (https://download[^"]*torchvision-(\d[\d.]*)%2Bcpu-cp313-cp313-manylinux_2_28_x86_64\.whl)#sha256=([0-9a-f]+)
+  - type: file
+    url: https://download.pytorch.org/whl/cpu/torchvision-0.26.0%2Bcpu-cp313-cp313-manylinux_2_28_aarch64.whl
+    sha256: 2e932af123a39137815dfd152c64cc683fa7cbd327c965e807c9728c7aa4971a
+    dest-filename: torchvision-0.26.0+cpu-cp313-cp313-manylinux_2_28_aarch64.whl
+    only-arches:
+      - aarch64
+    x-checker-data:
+      type: html
+      url: https://download.pytorch.org/whl/cpu/torchvision/
+      pattern: (https://download[^"]*torchvision-(\d[\d.]*)%2Bcpu-cp313-cp313-manylinux_2_28_aarch64\.whl)#sha256=([0-9a-f]+)

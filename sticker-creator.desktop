@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Sticker Creator
+GenericName=Sticker Creator
+Comment=Create transparent stickers from images using AI-powered segmentation
+Exec=sticker-creator
+Icon=sticker-creator
+Categories=Graphics;Qt;KDE;
+Terminal=false
+StartupNotify=true
+StartupWMClass=sticker-creator
+MimeType=image/png;image/jpeg;image/jpg;image/webp;image/bmp;image/tiff;

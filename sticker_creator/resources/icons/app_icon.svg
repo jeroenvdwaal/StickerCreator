@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="stickerGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5BC0F2"/>
+      <stop offset="1" stop-color="#1E96D6"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="rotate(-8 128 128)">
+    <!-- Drop shadow approximation: offset dark rounded square behind -->
+    <rect x="36" y="42" width="188" height="188" rx="44" ry="44"
+          fill="#000000" fill-opacity="0.18"/>
+
+    <!-- White sticker border -->
+    <rect x="34" y="34" width="188" height="188" rx="44" ry="44"
+          fill="white"/>
+
+    <!-- Coloured face -->
+    <rect x="48" y="48" width="160" height="160" rx="34" ry="34"
+          fill="url(#stickerGrad)"/>
+
+    <!-- Eyes -->
+    <circle cx="100" cy="118" r="13" fill="white"/>
+    <circle cx="156" cy="118" r="13" fill="white"/>
+
+    <!-- Smile -->
+    <path d="M 86 152 Q 128 196 170 152"
+          fill="none" stroke="white"
+          stroke-width="14" stroke-linecap="round"/>
+  </g>
+</svg>

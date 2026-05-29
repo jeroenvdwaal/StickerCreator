@@ -1,0 +1,16 @@
+# SAM 2 built from upstream git.
+# Build requires torch importable — depends on python3-torch-cpu.
+# PYTHONPATH lets pip find /app site-packages during setuptools build.
+name: python3-sam2
+buildsystem: simple
+build-commands:
+  - PYTHONPATH=${FLATPAK_DEST}/lib/python3.13/site-packages
+      pip3 install --verbose --exists-action=i
+      --prefix=${FLATPAK_DEST}
+      --no-deps --no-build-isolation
+      ./sam2
+sources:
+  - type: git
+    url: https://github.com/facebookresearch/sam2.git
+    commit: 2b90b9f5ceec907a1c18123530e92e794ad901a4
+    dest: sam2

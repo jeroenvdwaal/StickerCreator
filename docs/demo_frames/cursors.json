@@ -1,0 +1,44 @@
+{
+  "1": {
+    "cursor": null,
+    "click": false,
+    "highlight": null
+  },
+  "2": {
+    "cursor": [
+      271,
+      328
+    ],
+    "click": true,
+    "highlight": null
+  },
+  "3": {
+    "cursor": [
+      271,
+      96
+    ],
+    "click": true,
+    "highlight": null
+  },
+  "4": {
+    "cursor": [
+      723,
+      394
+    ],
+    "click": false,
+    "highlight": [
+      556,
+      385,
+      334,
+      18
+    ]
+  },
+  "5": {
+    "cursor": [
+      723,
+      507
+    ],
+    "click": true,
+    "highlight": null
+  }
+}
