@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QSettings, QSize, Slot
+from PySide6.QtCore import Qt, QSize, Slot
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -30,21 +30,12 @@ from PySide6.QtWidgets import (
 )
 
 from sticker_creator.segmentation.segmenter import Segmenter
+from sticker_creator.session import StickerSession
 from sticker_creator.utils.clipboard import ClipboardManager
 from sticker_creator.utils.file_io import ImageLoader, ImageSaver
-from sticker_creator.utils.sticker_border import (
-    BACKGROUND_TRANSPARENT,
-    apply_background,
-)
-from sticker_creator.utils.sticker_pipeline import (
-    StickerOptions,
-    auto_border_width,
-    build_raw_sticker,
-    compose_sticker,
-    resize_for_whatsapp,
-)
+from sticker_creator.utils.sticker_pipeline import resize_for_whatsapp
 from sticker_creator.utils.icons import icon_undo, icon_clear
-from sticker_creator.utils.balloon_renderer import STYLE_AUTO
+from sticker_creator.utils.settings import Keys, get_settings
 from sticker_creator.widgets.drop_overlay import ACCEPTED_EXTENSIONS, DropOverlay
 from sticker_creator.widgets.image_viewer import ImageViewer
 from sticker_creator.widgets.inspector_panel import InspectorPanel
@@ -54,13 +45,6 @@ from sticker_creator.widgets.help_dialog import HelpDialog
 from sticker_creator.widgets.shortcuts_dialog import ShortcutsDialog
 from sticker_creator.widgets.toast_notification import ToastOverlay
 from sticker_creator.widgets.welcome_dialog import WelcomeDialog
-
-
-_SETTINGS_GEOMETRY = "ui/geometry"
-_SETTINGS_STATE = "ui/window_state"
-_SETTINGS_LAST_OPEN_DIR = "paths/last_open_dir"
-_SETTINGS_LAST_SAVE_DIR = "paths/last_save_dir"
-_SETTINGS_SHOW_WELCOME = "ui/show_welcome"
 
 
 def _sanitize_for_filename(text: str, max_len: int = 40) -> str:
@@ -93,18 +77,9 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 600)
         self.resize(1200, 760)
 
-        # Pipeline state
-        self._current_image_path: str | None = None
-        self._current_image: np.ndarray | None = None
-        self._current_mask: np.ndarray | None = None
-        self._raw_sticker: np.ndarray | None = None
-        self._current_sticker: np.ndarray | None = None
-        self._border_enabled: bool = True
-        self._border_width: int = 7
-        self._background_color: str = BACKGROUND_TRANSPARENT
+        # Workflow state lives in the session; the window owns only UI-local state.
+        self.session = StickerSession(self)
         self._seg_start_time: float | None = None
-        self._balloon_text: str = ""
-        self._balloon_style: str = STYLE_AUTO
         self._welcome_shown: bool = False
 
         # Services
@@ -303,6 +278,12 @@ class MainWindow(QMainWindow):
     # ── Signal wiring ──────────────────────────────────────────────────────
 
     def _wire_signals(self) -> None:
+        # Session — workflow state drives the widgets through these signals.
+        self.session.image_changed.connect(self._on_session_image_changed)
+        self.session.mask_changed.connect(self.image_viewer.set_mask)
+        self.session.border_width_changed.connect(self.inspector.set_border_width)
+        self.session.sticker_changed.connect(self._on_session_sticker_changed)
+
         # Segmenter
         self.segmenter.model_loaded.connect(self._on_model_loaded)
         self.segmenter.model_error.connect(self._on_model_error)
@@ -334,7 +315,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_open_image(self) -> None:
-        start_dir = self._settings().value(_SETTINGS_LAST_OPEN_DIR, str(Path.home()))
+        start_dir = get_settings().value(Keys.LAST_OPEN_DIR, str(Path.home()))
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Image",
@@ -350,28 +331,29 @@ class MainWindow(QMainWindow):
         if image is None:
             self._status.showMessage("No image found in clipboard", 3000)
             return
-        self._current_image_path = None
-        self._set_image(image)
+        self.session.set_image(image, path=None)
 
     def _load_image(self, file_path: str) -> None:
         image = self.image_loader.load(file_path)
         if image is None:
             QMessageBox.warning(self, "Open Image", f"Failed to load image:\n{file_path}")
             return
-        self._current_image_path = file_path
-        self._settings().setValue(_SETTINGS_LAST_OPEN_DIR, str(Path(file_path).parent))
-        self._set_image(image)
+        get_settings().setValue(Keys.LAST_OPEN_DIR, str(Path(file_path).parent))
+        self.session.set_image(image, path=file_path)
 
-    def _set_image(self, image: np.ndarray) -> None:
-        self._current_image = image
-        self._current_mask = None
-        self._raw_sticker = None
-        self._current_sticker = None
+    # ── Session → widgets ────────────────────────────────────────────────────
 
+    @Slot(object)
+    def _on_session_image_changed(self, image) -> None:
+        if image is None:
+            return
         self._stack.setCurrentIndex(1)
         self.image_viewer.set_image(image)  # toolstrip enable + mode switch happens inside
-        self.inspector.set_sticker(None)
         self.inspector.dismiss_alert()
+
+    @Slot(object)
+    def _on_session_sticker_changed(self, preview) -> None:
+        self.inspector.set_sticker(preview)
         self._refresh_action_state()
 
     # ── Segmentation events ────────────────────────────────────────────────
@@ -380,58 +362,41 @@ class MainWindow(QMainWindow):
     def _on_point_added(self, _point: dict) -> None:
         self._refresh_action_state()
 
-        if self._current_image is None:
+        if self.session.current_image is None:
             return
         if self.segmenter.active_model_name is None:
             self._status.showMessage("A segmentation model is required.", 4000)
             return
         self.segmenter.segment(
-            image=self._current_image,
+            image=self.session.current_image,
             points=self.image_viewer.prompt_points(),
         )
 
     @Slot(object)
     def _on_undo_performed(self, _removed: dict) -> None:
         self._refresh_action_state()
-        if self._current_image is None or not self.image_viewer.has_prompt_points():
-            self._current_mask = None
-            self._raw_sticker = None
-            self._current_sticker = None
-            self.inspector.set_sticker(None)
-            self._refresh_action_state()
+        if self.session.current_image is None or not self.image_viewer.has_prompt_points():
+            self.session.clear_derived()
             return
         if self.segmenter.active_model_name is None:
             return
         self.segmenter.segment(
-            image=self._current_image,
+            image=self.session.current_image,
             points=self.image_viewer.prompt_points(),
         )
 
     @Slot()
     def _on_points_cleared(self) -> None:
-        self._current_mask = None
-        self._raw_sticker = None
-        self._current_sticker = None
-        self.inspector.set_sticker(None)
-        self._refresh_action_state()
+        self.session.clear_derived()
 
     @Slot(object)
     def _on_mask_ready(self, mask: np.ndarray) -> None:
-        self._current_mask = mask
-        self.image_viewer.set_mask(mask)
-
         if self._seg_start_time is not None:
             elapsed = time.time() - self._seg_start_time
             self._status.showMessage(f"Segmented in {elapsed:.2f}s", 3000)
             self._seg_start_time = None
 
-        if self._current_image is not None:
-            self._raw_sticker = build_raw_sticker(self._current_image, mask)
-            self._border_width = auto_border_width(self._raw_sticker)
-            self.inspector.set_border_width(self._border_width)
-            self._rebuild_sticker()
-
-        self._refresh_action_state()
+        self.session.set_mask(mask)
 
     @Slot()
     def _on_seg_started(self) -> None:
@@ -487,68 +452,43 @@ class MainWindow(QMainWindow):
 
     # ── Border / Background ────────────────────────────────────────────────
 
-    def _rebuild_sticker(self) -> None:
-        """Re-derive ``_current_sticker`` from ``_raw_sticker`` via the pipeline.
-
-        The pipeline owns the compose order (balloon → border); the preview
-        background is applied here for display only and is not part of the
-        saved sticker.
-        """
-        if self._raw_sticker is None:
-            return
-        options = StickerOptions(
-            border_enabled=self._border_enabled,
-            border_width=self._border_width,
-            balloon_text=self._balloon_text,
-            balloon_style=self._balloon_style,
-            background=self._background_color,
-        )
-        self._current_sticker = compose_sticker(self._raw_sticker, options)
-        self.inspector.set_sticker(
-            apply_background(self._current_sticker, self._background_color)
-        )
-
     @Slot(bool)
     def _on_border_toggled(self, enabled: bool) -> None:
-        self._border_enabled = enabled
-        self._rebuild_sticker()
+        self.session.set_border_enabled(enabled)
 
     @Slot(int)
     def _on_border_width_changed(self, width: int) -> None:
-        self._border_width = width
-        if self._border_enabled:
-            self._rebuild_sticker()
+        self.session.set_border_width(width)
 
     @Slot(str)
     def _on_background_changed(self, color: str) -> None:
-        self._background_color = color
-        self._rebuild_sticker()
+        self.session.set_background(color)
 
     @Slot(str)
     def _on_balloon_text_changed(self, text: str) -> None:
-        self._balloon_text = text
-        self._rebuild_sticker()
+        self.session.set_balloon_text(text)
 
     @Slot(str)
     def _on_balloon_style_changed(self, style: str) -> None:
-        self._balloon_style = style
-        self._rebuild_sticker()
+        self.session.set_balloon_style(style)
 
     # ── Save / Copy ────────────────────────────────────────────────────────
 
     @Slot()
     def _on_save_sticker(self) -> None:
-        if self._current_sticker is None:
+        sticker = self.session.current_sticker
+        if sticker is None:
             return
-        base = Path(self._current_image_path).stem if self._current_image_path else "sticker"
-        balloon_slug = _sanitize_for_filename(self._balloon_text)
+        image_path = self.session.image_path
+        base = Path(image_path).stem if image_path else "sticker"
+        balloon_slug = _sanitize_for_filename(self.session.balloon_text)
         if balloon_slug:
             default_name = f"{base}_{balloon_slug}_sticker.png"
         else:
             default_name = f"{base}_sticker.png"
 
-        settings = self._settings()
-        start_dir = settings.value(_SETTINGS_LAST_SAVE_DIR, str(Path.home()))
+        settings = get_settings()
+        start_dir = settings.value(Keys.LAST_SAVE_DIR, str(Path.home()))
         file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Save Sticker",
@@ -565,19 +505,20 @@ class MainWindow(QMainWindow):
         path = Path(file_path)
         is_whatsapp = "WhatsApp Sticker" in (selected_filter or "")
         if is_whatsapp:
-            self.image_saver.save_webp(resize_for_whatsapp(self._current_sticker), path, quality=80)
+            self.image_saver.save_webp(resize_for_whatsapp(sticker), path, quality=80)
         elif path.suffix.lower() == ".webp":
-            self.image_saver.save_webp(self._current_sticker, path, quality=100)
+            self.image_saver.save_webp(sticker, path, quality=100)
         else:
-            self.image_saver.save_png(self._current_sticker, path)
-        settings.setValue(_SETTINGS_LAST_SAVE_DIR, str(path.parent))
+            self.image_saver.save_png(sticker, path)
+        settings.setValue(Keys.LAST_SAVE_DIR, str(path.parent))
         self._toast.show_success(f"Saved: {path.name}")
 
     @Slot()
     def _on_copy_sticker(self) -> None:
-        if self._current_sticker is None:
+        sticker = self.session.current_sticker
+        if sticker is None:
             return
-        self.clipboard_manager.copy_image(self._current_sticker)
+        self.clipboard_manager.copy_image(sticker)
         self._toast.show_success("Sticker copied to clipboard")
 
     # ── Misc actions ───────────────────────────────────────────────────────
@@ -604,9 +545,9 @@ class MainWindow(QMainWindow):
     # ── Action enablement ──────────────────────────────────────────────────
 
     def _refresh_action_state(self) -> None:
-        has_image = self._current_image is not None
+        has_image = self.session.current_image is not None
         has_points = has_image and self.image_viewer.has_prompt_points()
-        has_sticker = self._current_sticker is not None
+        has_sticker = self.session.has_sticker
 
         self._undo_action.setEnabled(has_points)
         self._clear_action.setEnabled(has_points)
@@ -644,13 +585,10 @@ class MainWindow(QMainWindow):
 
     # ── Window state ───────────────────────────────────────────────────────
 
-    def _settings(self) -> QSettings:
-        return QSettings("KDE", "Sticker Creator")
-
     def _restore_window_state(self) -> None:
-        s = self._settings()
-        geom = s.value(_SETTINGS_GEOMETRY)
-        state = s.value(_SETTINGS_STATE)
+        s = get_settings()
+        geom = s.value(Keys.GEOMETRY)
+        state = s.value(Keys.WINDOW_STATE)
         if geom:
             self.restoreGeometry(geom)
         if state:
@@ -661,8 +599,8 @@ class MainWindow(QMainWindow):
         if self._welcome_shown:
             return
         self._welcome_shown = True
-        s = self._settings()
-        if s.value(_SETTINGS_SHOW_WELCOME, True, type=bool):
+        s = get_settings()
+        if s.value(Keys.SHOW_WELCOME, True, type=bool):
             from PySide6.QtCore import QTimer
             QTimer.singleShot(0, self._show_welcome)
 
@@ -670,14 +608,14 @@ class MainWindow(QMainWindow):
         dlg = WelcomeDialog(self)
         dlg.exec()
         if dlg.dont_show_again():
-            s = self._settings()
-            s.setValue(_SETTINGS_SHOW_WELCOME, False)
+            s = get_settings()
+            s.setValue(Keys.SHOW_WELCOME, False)
             s.sync()
 
     def closeEvent(self, event):  # type: ignore[override]
-        s = self._settings()
-        s.setValue(_SETTINGS_GEOMETRY, self.saveGeometry())
-        s.setValue(_SETTINGS_STATE, self.saveState())
+        s = get_settings()
+        s.setValue(Keys.GEOMETRY, self.saveGeometry())
+        s.setValue(Keys.WINDOW_STATE, self.saveState())
         s.sync()
         self.segmenter.shutdown()
         self._toast.deleteLater()
