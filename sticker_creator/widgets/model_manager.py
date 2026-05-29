@@ -8,7 +8,7 @@ Each card downloads in its own ``QThread`` with inline progress, can be deleted
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialogButtonBox,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from sticker_creator.segmentation.segmenter import Segmenter
 from sticker_creator.utils.model_downloader import ModelDownloader
+from sticker_creator.utils.worker_thread import WorkerThread
 
 
 # Maximum simultaneous downloads allowed
@@ -75,27 +76,21 @@ class _DownloadHandle(QObject):
         super().__init__(parent)
         self.model_name = model_name
         self._downloader = ModelDownloader(model_name)
-        self._thread = QThread(self)
-        self._downloader.moveToThread(self._thread)
+        self._runner = WorkerThread(self._downloader)
 
         # Forward signals
         self._downloader.progress.connect(self._on_progress)
         self._downloader.finished.connect(self._on_finished)
         self._downloader.error.connect(self._on_error)
 
-        self._thread.started.connect(self._downloader.run)
-        self._thread.finished.connect(self._thread.deleteLater)
-
     def start(self) -> None:
         """Begin the download in the background thread."""
-        self._thread.start()
+        self._runner.start(on_started=self._downloader.run)
 
     def abort(self) -> None:
         """Cancel the download and clean up the thread."""
         self._downloader.abort()
-        if self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait(2000)
+        self._runner.stop()
 
     @Slot(int)
     def _on_progress(self, pct: int) -> None:
@@ -104,16 +99,12 @@ class _DownloadHandle(QObject):
     @Slot(object)
     def _on_finished(self, path: object) -> None:
         self.finished.emit(self.model_name, path)
-        if self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait()
+        self._runner.stop()
 
     @Slot(str)
     def _on_error(self, msg: str) -> None:
         self.error.emit(self.model_name, msg)
-        if self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait()
+        self._runner.stop()
 
 
 class ModelManager(QDialog):

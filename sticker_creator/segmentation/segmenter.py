@@ -14,9 +14,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from PySide6.QtCore import QObject, QSettings, Signal, Slot, QThread
+from PySide6.QtCore import QObject, Signal, Slot
 
 from sticker_creator.utils.paths import user_model_dir
+from sticker_creator.utils import settings as app_settings
+from sticker_creator.utils.worker_thread import WorkerThread
 from sticker_creator.segmentation.model_registry import (
     KNOWN_MODELS,
     MODEL_SIZES,
@@ -25,11 +27,6 @@ from sticker_creator.segmentation.model_registry import (
 )
 
 DEFAULT_MODEL_DIR = user_model_dir()
-
-
-def get_settings() -> QSettings:
-    """Return a persistent QSettings instance for the application."""
-    return QSettings("KDE", "Sticker Creator")
 
 
 def _patch_sam2_transforms() -> None:
@@ -204,7 +201,7 @@ class SegmenterWorker(QObject):
         try:
             # Resolve which model to load
             if model_name is None:
-                model_name = get_settings().value("active_model", "")
+                model_name = app_settings.get_active_model() or ""
                 if not model_name:
                     available = self.registry.list_downloaded()
                     if available:
@@ -250,8 +247,7 @@ class SegmenterWorker(QObject):
 
             self._current_model_name = model_name
 
-            get_settings().setValue("active_model", model_name)
-            get_settings().sync()
+            app_settings.set_active_model(model_name)
 
             self.model_loaded.emit(model_name)
 
@@ -339,11 +335,8 @@ class Segmenter(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._thread = QThread()
         self._worker = SegmenterWorker()
-
-        # Move worker to background thread
-        self._worker.moveToThread(self._thread)
+        self._runner = WorkerThread(self._worker)
 
         # Forward worker signals to our own
         self._worker.model_loaded.connect(self.model_loaded)
@@ -356,21 +349,19 @@ class Segmenter(QObject):
         self._load_requested.connect(self._worker.load_model)
         self._segment_requested.connect(self._worker.segment)
 
-        self._thread.finished.connect(self._worker.deleteLater)
-        self._thread.start()
+        # Persistent thread: work is dispatched via the queued signals above.
+        self._runner.start()
 
     # ── Model management ───────────────────────────────────────────────────
 
     @property
     def active_model_name(self) -> str | None:
         """The currently active model name, or ``None`` if none set."""
-        val = get_settings().value("active_model", "")
-        return val or None
+        return app_settings.get_active_model()
 
     @active_model_name.setter
     def active_model_name(self, name: str) -> None:
-        get_settings().setValue("active_model", name)
-        get_settings().sync()
+        app_settings.set_active_model(name)
 
     def load_model(self, model_name: str | None = None):
         """Queue model loading in the background thread."""
@@ -399,8 +390,7 @@ class Segmenter(QObject):
         if ckpt.exists():
             ckpt.unlink()
             if self.active_model_name == model_name:
-                get_settings().remove("active_model")
-                get_settings().sync()
+                app_settings.clear_active_model()
             return True
         return False
 
@@ -415,5 +405,4 @@ class Segmenter(QObject):
 
     def shutdown(self):
         """Stop the background thread and clean up."""
-        self._thread.quit()
-        self._thread.wait(2000)
+        self._runner.stop()
