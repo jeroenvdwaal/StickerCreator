@@ -44,6 +44,7 @@ from sticker_creator.utils.icons import (
     icon_undo,
     icon_clear,
 )
+from sticker_creator.widgets.view_transform import ViewTransform
 
 
 
@@ -219,6 +220,7 @@ class ImageViewer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._image: np.ndarray | None = None
+        self._transform: ViewTransform | None = None
         self._pixmap: QPixmap | None = None
         self._mask: np.ndarray | None = None
         self._points: list[dict] = []
@@ -655,6 +657,7 @@ class ImageViewer(QWidget):
     def set_image(self, image: np.ndarray) -> None:
         """Set the image to display. Must be RGB (H,W,3) or RGBA (H,W,4)."""
         self._image = image
+        self._transform = ViewTransform.from_image(image)
         self._mask = None
         self._points = []
         self._clear_hover_preview()
@@ -694,14 +697,9 @@ class ImageViewer(QWidget):
         self, scene_pos: QPointF
     ) -> tuple[int, int] | None:
         """Convert scene position to image pixel coordinates."""
-        if self._image is None:
+        if self._transform is None:
             return None
-        x = int(scene_pos.x())
-        y = int(scene_pos.y())
-        h, w = self._image.shape[:2]
-        if 0 <= x < w and 0 <= y < h:
-            return (x, y)
-        return None
+        return self._transform.scene_to_pixel(scene_pos.x(), scene_pos.y())
 
     # ── Internal rendering ────────────────────────────────────────────────
 

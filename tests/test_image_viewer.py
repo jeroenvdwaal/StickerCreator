@@ -7,6 +7,8 @@ that only require numpy and OpenCV — no QApplication needed.
 import numpy as np
 import cv2
 
+from sticker_creator.widgets.view_transform import ViewTransform
+
 
 def _mask_to_contours(mask: np.ndarray) -> list[np.ndarray]:
     """Extract contour polylines from a binary mask using OpenCV."""
@@ -91,48 +93,47 @@ class TestContourToPoints:
         assert points[1] == (30.0, 40.0)
 
 
-class TestImageViewerCoordinateMapping:
-    """Tests for coordinate mapping logic used in ImageViewer.
+class TestViewTransform:
+    """Tests for the pure scene→pixel coordinate algebra extracted from the
+    viewer (sticker_creator.widgets.view_transform.ViewTransform)."""
 
-    The get_image_coordinates method does:
-        x = int(scene_pos.x()), y = int(scene_pos.y())
-        h, w = image.shape[:2]
-        if 0 <= x < w and 0 <= y < h: return (x, y)
-    """
+    def test_from_image_reads_dimensions(self):
+        """from_image takes width/height from a (H, W, C) numpy image."""
+        image = np.zeros((30, 80, 3), dtype=np.uint8)  # H=30, W=80
+        t = ViewTransform.from_image(image)
+        assert t.width == 80
+        assert t.height == 30
 
-    def test_coordinates_in_bounds(self):
-        """Valid image coordinates should produce correct pixels."""
-        scene_x, scene_y = 50.7, 30.2
-        x, y = int(scene_x), int(scene_y)
-        assert x == 50
-        assert y == 30
+    def test_scene_to_pixel_truncates(self):
+        """Fractional scene coords truncate toward an integer pixel."""
+        t = ViewTransform(width=100, height=100)
+        assert t.scene_to_pixel(50.7, 30.2) == (50, 30)
 
-    def test_coordinates_out_of_bounds_negative(self):
-        """Negative coordinates should be out of bounds."""
-        scene_x, scene_y = -5, -10
-        x, y = int(scene_x), int(scene_y)
-        assert x < 0
-        assert y < 0
+    def test_scene_to_pixel_in_bounds_edges(self):
+        """Last valid pixel is width-1 / height-1."""
+        t = ViewTransform(width=100, height=100)
+        assert t.scene_to_pixel(0, 0) == (0, 0)
+        assert t.scene_to_pixel(99.9, 99.9) == (99, 99)
 
-    def test_coordinates_out_of_bounds_overflow(self):
-        """Coordinates beyond image dimensions should be out of bounds."""
-        scene_x, scene_y = 500, 500
-        x, y = int(scene_x), int(scene_y)
-        assert x >= 100
-        assert y >= 100
+    def test_scene_to_pixel_negative_returns_none(self):
+        """Negative scene coords fall outside the image."""
+        t = ViewTransform(width=100, height=100)
+        assert t.scene_to_pixel(-5, -10) is None
 
-    def test_bounds_check_logic(self):
-        """Full bounds check for a 100x100 image."""
-        image = np.zeros((100, 100, 3), dtype=np.uint8)
-        h, w = image.shape[:2]
+    def test_scene_to_pixel_overflow_returns_none(self):
+        """Coords at or beyond the dimensions fall outside the image."""
+        t = ViewTransform(width=100, height=100)
+        assert t.scene_to_pixel(100, 50) is None
+        assert t.scene_to_pixel(50, 100) is None
+        assert t.scene_to_pixel(500, 500) is None
 
-        def in_bounds(x, y):
-            return 0 <= x < w and 0 <= y < h
-
-        assert in_bounds(0, 0) is True
-        assert in_bounds(99, 99) is True
-        assert in_bounds(50, 50) is True
-        assert in_bounds(-1, 0) is False
-        assert in_bounds(0, -1) is False
-        assert in_bounds(100, 50) is False
-        assert in_bounds(50, 100) is False
+    def test_in_bounds(self):
+        """Bounds check for a 100x100 image."""
+        t = ViewTransform(width=100, height=100)
+        assert t.in_bounds(0, 0) is True
+        assert t.in_bounds(99, 99) is True
+        assert t.in_bounds(50, 50) is True
+        assert t.in_bounds(-1, 0) is False
+        assert t.in_bounds(0, -1) is False
+        assert t.in_bounds(100, 50) is False
+        assert t.in_bounds(50, 100) is False
