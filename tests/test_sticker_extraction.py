@@ -257,6 +257,6 @@ class TestApplyBackground:
         assert np.all(out[:, :, 3] == 255)
         # Transparent pixels become pure black.
         assert tuple(out[1, 1]) == (0, 0, 0, 255)
-        # Half-alpha red composited over black ≈ 100 red.
-        assert out[0, 1, 0] == round(200 * (128 / 255))
+        # Half-alpha red over black: 200*128/255 = 100.39, truncated to 100.
+        assert out[0, 1, 0] == 100
         assert out[0, 1, 1] == 0
