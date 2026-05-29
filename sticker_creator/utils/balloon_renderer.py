@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -99,39 +100,52 @@ def detect_style(text: str) -> str:
     return STYLE_SPEECH
 
 
-# ── Public entry point ────────────────────────────────────────────────────────
+# ── Layout (pure geometry, no drawing) ──────────────────────────────────────────
 
-def render_balloon(
+@dataclass(frozen=True)
+class BalloonLayout:
+    """Where and how the balloon goes — pure data, no pixels.
+
+    Produced by :func:`plan_balloon`; consumed by :func:`render_balloon` to
+    paint, and directly assertable in tests (side picked, canvas grown, tail/
+    body seated against the subject) without touching a draw surface.
+
+    Coordinates are in the **new (expanded) canvas** pixel space.
+    """
+
+    style: str                                  # resolved (never STYLE_AUTO)
+    side: str                                   # SIDE_LEFT / SIDE_RIGHT
+    lines: tuple[str, ...]                      # wrapped text lines
+    font_size: int                             # px font size for drawing
+    pad_x: int
+    pad_y: int
+    canvas_size: tuple[int, int]               # (new_w, new_h)
+    sticker_origin: tuple[int, int]            # (sx, sy) of subject in canvas
+    balloon_rect: tuple[float, float, float, float]  # (x, y, w, h) in canvas
+
+
+def plan_balloon(
     sticker: np.ndarray,
     text: str,
     style: str = STYLE_AUTO,
-) -> np.ndarray:
-    """Return a new RGBA array with the balloon merged into *sticker*.
+) -> BalloonLayout | None:
+    """Decide balloon placement for *sticker* + *text*; return pure geometry.
 
-    The balloon is drawn as an opaque fill (plus text) and added to the
-    sticker's alpha so a later white-border pass wraps subject and balloon
-    together.  No border and no tail are drawn here — the balloon simply
-    sits beside the subject, just touching the silhouette.
-
-    Parameters
-    ----------
-    sticker:
-        H×W×4 RGBA uint8 sticker array (no border yet).
-    text:
-        Balloon text (may contain newlines).
-    style:
-        ``"auto"`` (default) infers from *text*; otherwise one of
-        ``"speech"``, ``"thought"``, ``"shout"``, ``"whisper"``.
+    No drawing happens here — the result is a :class:`BalloonLayout` ready to
+    paint.  Returns ``None`` when *text* is blank (nothing to draw).  Font
+    metrics (PIL ``ImageFont``) are used only to *measure* for wrapping and
+    sizing; no Qt and no draw surface are involved.
     """
     if not text.strip():
-        return sticker
+        return None
 
     resolved = detect_style(text) if style == STYLE_AUTO else style
     h, w = sticker.shape[:2]
 
     # ── Font + text measurement ───────────────────────────────────────────
     base_size = max(22, w // 13)
-    font = _make_font(_style_size(resolved, base_size))
+    font_size = _style_size(resolved, base_size)
+    font = _make_font(font_size)
     lh = _line_height(font)
 
     max_text_w = int(w * 0.58)
@@ -193,7 +207,57 @@ def render_balloon(
     # Adjusted coordinates in the new canvas
     bx = b_left + sx
     by = b_top + sy
-    balloon_rect = (float(bx), float(by), float(balloon_w), float(balloon_h))
+
+    return BalloonLayout(
+        style=resolved,
+        side=side,
+        lines=tuple(lines),
+        font_size=font_size,
+        pad_x=pad_x,
+        pad_y=pad_y,
+        canvas_size=(new_w, new_h),
+        sticker_origin=(sx, sy),
+        balloon_rect=(float(bx), float(by), float(balloon_w), float(balloon_h)),
+    )
+
+
+# ── Public entry point ────────────────────────────────────────────────────────
+
+def render_balloon(
+    sticker: np.ndarray,
+    text: str,
+    style: str = STYLE_AUTO,
+) -> np.ndarray:
+    """Return a new RGBA array with the balloon merged into *sticker*.
+
+    The balloon is drawn as an opaque fill (plus text) and added to the
+    sticker's alpha so a later white-border pass wraps subject and balloon
+    together.  No border and no tail are drawn here — the balloon simply
+    sits beside the subject, just touching the silhouette.
+
+    Placement is decided by :func:`plan_balloon`; this function only paints
+    that plan.
+
+    Parameters
+    ----------
+    sticker:
+        H×W×4 RGBA uint8 sticker array (no border yet).
+    text:
+        Balloon text (may contain newlines).
+    style:
+        ``"auto"`` (default) infers from *text*; otherwise one of
+        ``"speech"``, ``"thought"``, ``"shout"``, ``"whisper"``.
+    """
+    layout = plan_balloon(sticker, text, style)
+    if layout is None:
+        return sticker
+    return _paint_balloon(sticker, layout)
+
+
+def _paint_balloon(sticker: np.ndarray, layout: BalloonLayout) -> np.ndarray:
+    """Paint *layout* over *sticker* and return the merged RGBA array."""
+    new_w, new_h = layout.canvas_size
+    sx, sy = layout.sticker_origin
 
     # ── Render: subject underneath, balloon fill + text on top ─────────────
     canvas = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
@@ -202,15 +266,16 @@ def render_balloon(
     # Balloon graphics on a supersampled layer for smooth (antialiased) edges.
     layer = Image.new("RGBA", (new_w * _SS, new_h * _SS), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    ss_font = _make_font(_style_size(resolved, base_size) * _SS)
+    ss_font = _make_font(layout.font_size * _SS)
 
     drawer = {
         STYLE_SPEECH: _draw_speech,
         STYLE_THOUGHT: _draw_thought,
         STYLE_SHOUT: _draw_shout,
         STYLE_WHISPER: _draw_whisper,
-    }[resolved]
-    drawer(draw, balloon_rect, ss_font, lines, pad_x, pad_y)
+    }[layout.style]
+    drawer(draw, layout.balloon_rect, ss_font, list(layout.lines),
+           layout.pad_x, layout.pad_y)
 
     layer = layer.resize((new_w, new_h), Image.Resampling.LANCZOS)
     canvas.alpha_composite(layer)
